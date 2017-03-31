@@ -1,6 +1,6 @@
 class CANet():
     '''Context-depedent attention modeling'''
-    def __init__(self, name, dev):
+    def __init__(self, name):
         pass
 
     def create_net(self):
