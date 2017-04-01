@@ -2,6 +2,7 @@ import random
 import numpy as np
 import time
 from multiprocessing import Process, Queue
+from tqdm import trange
 
 from singa import image_tool
 
@@ -11,16 +12,13 @@ validate_tool = image_tool.ImageTool()
 class DataIter(object):
     def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr,
                  batchsize=32, capacity=50, shuffle=True, delimiter=' ',
-                 small_size=256, large_size=288, crop_size=224):
+                 image_size=224):
         self.batchsize = batchsize
         self.image_folder = image_dir
-        self.small_size = small_size
-        self.large_size = large_size
-        self.crop_size = crop_size
+        self.image_size = image_size
         self.stop = False
         self.proc = None  # for loading triplet
         self.queue = Queue(capacity)
-        self.pos = 0
 
         tag_offset = []
         self.tag_dim = 0
@@ -31,7 +29,7 @@ class DataIter(object):
         with open(pair_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset)]
+                tags = [int(idx) + off if int(idx) != -1 for (idx, off) in zip(vals[3:], tag_offset)]
                 record = (vals[0], vals[1], vals[2], tags)
                 self.image_pair.append(record)
             self.num_batches = len(self.image_pair) / batchsize
@@ -40,7 +38,7 @@ class DataIter(object):
         with open(shop_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset)]
+                tags = [int(idx) + off if int(idx) != -1 for (idx, off) in zip(vals[3:], tag_offset)]
                 record = (vals[0], vals[1], tags)
                 self.shop_image.append(record)
 
@@ -52,6 +50,7 @@ class DataIter(object):
 
     def start(self, func):
         # func to be load_triples, load_street_images, load_shop_images
+        self.stop = False
         self.proc = Process(target=func)
         self.proc.start()
 
@@ -62,13 +61,7 @@ class DataIter(object):
             self.proc.terminate()
 
     def read_image(self, path, is_train=True):
-        if is_train:
-            img = train_tool.load(path).resize_by_range(
-                (self.small_size, self.large_size)).random_crop(
-                (self.crop_size, self.crop_size)).get()
-        else:
-            img = image_tool.crop(validate_tool.load(path).resize_by_list(
-                [(self.small_size + self.large_size) / 2]).get(), 'center')
+        img = image_tool.load_img(path).resize((self.image_size, self.image_size))
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary
 
@@ -78,14 +71,19 @@ class DataIter(object):
         return vec
 
     def load_triples(self):
-        while not self.stop:
+        self.queue.clear()
+        if self.shuffle:
+            random.shuffle(self.idx)
+        for b in range(len(self.image_pair) / self.batchsize):
+            if self.stop:
+                return
             if not self.queue.full():
                 qimgs = np.array((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 pimgs = np.array((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 nimgs = np.array((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 ptags = np.array((self.batchsize, self.tag_dim), dtype=np.float32)
                 ntags = np.array((self.batchsize, self.tag_dim), dtype=np.float32)
-                for i, record in enumerate(self.image_pair[self.idx[self.pos: self.pos+self.bathcsize]]):
+                for i, record in enumerate(self.image_pair[self.idx[b * self.batchsize: (b + 1) * self.batchsize]]):
                     qimgs[i] = self.read_image(record[0])
                     pimgs[i] = self.read_image(record[1])
                     item = record[2]
@@ -98,13 +96,9 @@ class DataIter(object):
                     ntags[i] = self.tag2vec(self.shop_image[nidx][2])
                 # enqueue one mini-batch
                 self.queue.put((qimgs, pimgs, ptags, nimgs, ntags))
-                self.pos += self.batchsize
-                if self.pos + self.batchsize > len(self.image_pair):
-                    self.pos = 0  # seek to the first record
-                    if self.shuffle:
-                        random.shuffle(self.idx)
             else:
                 time.sleep(0.1)
+        self.stop = True
 
     def load_street_images(self):
         self.queue.clear()
@@ -120,8 +114,10 @@ class DataIter(object):
                 self.queue.put((qimgs, item))
             else:
                 time.sleep(0.1)
+        self.stop = True
 
     def load_shop_images(self):
+        self.queue.clear()
         for b in range(len(self.shop_image) / self.batchsize):
             if self.stop:
                 return
@@ -137,15 +133,34 @@ class DataIter(object):
                 self.queue.put((imgs, items, tags))
             else:
                 time.sleep(0.1)
-
+        self.stop = True
 
 class DARNDataIter(DataIter):
-    def __init__(self, pair_file, shop_file):
-        super(DARNDataIter, self).__init__(pair_file, shop_file)
-        self.num_values = []
+    def __init__(self, image_dir, pair_file, shop_file):
+        self.ntags_per_attr = [20, 56, 10, 25, 27, 16, 7, 12, 6]
+        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
 
 
 class FashionDataIter(DataIter):
-    def __init__(self, pair_file, shop_file):
-        super(FashionDataIter, self).__init__(pair_file, shop_file)
-        self.num_values = []
+    def __init__(self, image_dir, pair_file, shop_file):
+        self.ntags_per_attr = []
+        super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
+
+
+if __name__ == '__main__':
+    train_dat = DARNDataIter('../data/darn/image', '../data/darn/train_pair.txt', '../data/darn/train_shop.txt')
+    train_dat.start(train_dat.load_triples)
+    for i in trange(train_dat.num_batches):
+        train_dat.next()
+    assert train_dat.stop == True, 'load pairs should stop!'
+
+    val_dat = DARNDataIter('../data/darn/image', '../data/darn/train_pair.txt', '../data/darn/train_shop.txt')
+    val_dat.start(val_dat.load_street_images)
+    for i in trange(val_dat.num_batches):
+        val_dat.next()
+    assert val_dat.stop == True, 'load street image should stop!'
+
+    val_dat.start(val_dat.load_shop_images)
+    for i in trange(len(val_dat.shop_image) / val_dat.batchsize):
+        val_dat.next()
+    assert val_dat.stop == True, 'load shop image should stop!'
