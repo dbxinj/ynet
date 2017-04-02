@@ -159,7 +159,7 @@ class DataIter(object):
 class DARNDataIter(DataIter):
     def __init__(self, image_dir, pair_file, shop_file):
         self.ntags_per_attr = [20, 56, 10, 25, 27, 16, 7, 12, 6]
-        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
+        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227)
 
 
 class FashionDataIter(DataIter):
