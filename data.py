@@ -2,6 +2,7 @@ import random
 import numpy as np
 import time
 import os
+import sys
 from multiprocessing import Process, Queue
 from tqdm import trange
 
@@ -19,7 +20,7 @@ class DataIter(object):
         self.image_size = image_size
         self.capacity = capacity
         self.shuffle = shuffle
-        self.proc = None  # for loading triplet
+        self.proc = []  # for loading triplet
         self.queue = Queue(capacity)
         self.image_pair = []
         self.shop_image = []
@@ -48,21 +49,30 @@ class DataIter(object):
 
     def next(self):
         assert self.proc is not None, 'call start before next'
-        while self.queue.empty():
-            time.sleep(0.1)
-        return self.queue.get()  # dequeue one mini-batch
+        try:
+            while self.queue.empty():
+                time.sleep(0.1)
+            return self.queue.get()  # dequeue one mini-batch
+        except Exception as e:
+            print(e)
+        except:
+            self.terminate()
+            sys.exit(1)
 
-    def start(self, func):
+    def start(self, func, nproc=4):
         # func to be load_triples, load_street_images, load_shop_images
         while not self.queue.empty():
             self.queue.get()
-        self.proc = Process(target=func)
-        self.proc.start()
+        for i in range(nproc):
+            self.proc.append(Process(target=func, args=(i, nproc)))
+            time.sleep(0.4)
+            self.proc[-1].start()
 
     def terminate(self):
-        if self.proc is not None:
+        for proc in self.proc:
             time.sleep(0.1)
-            self.proc.terminate()
+            proc.terminate()
+        self.proc = []
 
     def read_image(self, path, is_train=True):
         img = image_tool.load_img(path).resize((self.image_size, self.image_size))
@@ -74,11 +84,16 @@ class DataIter(object):
         vec[tags] = 1.0
         return vec
 
-    def load_triples(self):
-        # self.queue = Queue(self.capacity)
-        if self.shuffle:
-            random.shuffle(self.idx)
-        for b in range(len(self.image_pair) / self.batchsize):
+    def shuffle(self):
+        random.shuffle(self.idx)
+
+    def load_triples(self, proc_id, nproc):
+        nbatch = len(self.shop_image) // self.batchsize
+        nbatch_per_proc = nbatch // nproc
+        batch_start = nbatch_per_proc * proc_id
+        if proc_id == nproc - 1:
+            nbatch_per_proc += nbatch % nproc
+        for b in range(batch_start, batch_start + nbatch_per_proc):
             if not self.queue.full():
                 qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 pimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
@@ -102,8 +117,14 @@ class DataIter(object):
             else:
                 time.sleep(0.1)
 
-    def load_street_images(self):
-        for b in range(len(self.image_pair) / self.batchsize):
+    def load_street_images(self, proc_id, nproc):
+        nbatch = len(self.shop_image) // self.batchsize
+        nbatch_per_proc = nbatch // nproc
+        batch_start = nbatch_per_proc * proc_id
+        if proc_id == nproc - 1:
+            nbatch_per_proc += nbatch % nproc
+        # self.queue = Queue(self.capacity)
+        for b in range(batch_start, batch_start + nbatch_per_proc):
             if not self.queue.full():
                 qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 for i, rec in enumerate(self.image_pair[b * self.batchsize: (b + 1) * self.batchsize]):
@@ -114,9 +135,14 @@ class DataIter(object):
             else:
                 time.sleep(0.1)
 
-    def load_shop_images(self):
+    def load_shop_images(self, proc_id, nproc):
+        nbatch = len(self.shop_image) // self.batchsize
+        nbatch_per_proc = nbatch // nproc
+        batch_start = nbatch_per_proc * proc_id
+        if proc_id == nproc - 1:
+            nbatch_per_proc += nbatch % nproc
         # self.queue = Queue(self.capacity)
-        for b in range(len(self.shop_image) / self.batchsize):
+        for b in range(batch_start, batch_start + nbatch_per_proc):
             if not self.queue.full():
                 imgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 tags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
