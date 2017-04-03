@@ -136,11 +136,11 @@ class CANet(object):
     def init_params(self, weight_path=None):
         if weight_path is None:
             for pname, pval in zip(self.param_names(), self.param_values()):
-                print pname, pval.shape
                 if 'conv' in pname and len(pval.shape) > 1:
                     initializer.gaussian(pval, 0, pval.shape[1])
                 else:
                     pval.set_value(0)
+                print pname, pval.shape, pval.l1()
         else:
             self.load(weight_path)
 
@@ -206,21 +206,25 @@ class CANIN(CANet):
         x = tensor.from_numpy(x)
         x.to_device(self.device)
         for lyr in self.shared:
-            if self.debug:
-                print lyr.name, x.shape, x.l1()
             x = lyr.forward(is_train, x)
+            if self.debug:
+                if type(x) == tensor.Tensor:
+                    print('%30s = %2.8f' % (lyr.name, x.l1()))
+                else:
+                    print('%30s = %2.8f, %2.8f' % (lyr.name, x[0].l1(), x[1].l1()))
         a, b = x
         for lyr in self.street:
-            if self.debug:
-                print lyr.name, a.shape, a.l1()
             a = lyr.forward(is_train, a)
-        for lyr in self.shop:
             if self.debug:
-                print lyr.name, b.shape, b.l1()
+                print('%30s = %2.8f' % (lyr.name, a.l1()))
+        for lyr in self.shop:
             b = lyr.forward(is_train, b)
+            if self.debug:
+                if type(b) == tensor.Tensor:
+                    print('%30s = %2.8f' % (lyr.name, b.l1()))
+                else:
+                    print('%30s = %2.8f, %2.8f' % (lyr.name, b[0].l1(), b[1].l1()))
         p, n = b
-        if self.debug:
-            print p.shape, n.shape
         return a, p, n
 
     def backward(self, da, dp, dn):
@@ -231,14 +235,14 @@ class CANIN(CANet):
         for lyr in self.shop[::-1]:
             dshop, dp = lyr.backward(True, dshop)
             if self.debug:
-                print lyr.name, dshop.shape, dshop.l1()
+                print('%30s = %2.8f' % (lyr.name, dshop.l1()))
             if dp is not None:
                 param_grads.extend(dp[::-1])
 
         for lyr in self.street[::-1]:
             da, dp = lyr.backward(True, da)
             if self.debug:
-                print lyr.name, da.shape, da.l1()
+                print('%30s = %2.8f' % (lyr.name, da.l1()))
             if dp is not None:
                 param_grads.extend(dp[::-1])
 
@@ -246,7 +250,7 @@ class CANIN(CANet):
         for lyr in self.shared[::-1]:
             d, dp = lyr.backward(True, d)
             if self.debug:
-                print lyr.name, d.shape, d.l1()
+                print('%30s = %2.8f' % (lyr.name, d.l1()))
             if dp is not None:
                 param_grads.extend(dp[::-1])
         return param_grads

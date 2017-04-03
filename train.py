@@ -41,7 +41,11 @@ def train(cfg, net, meanstd, train_data, val_data=None):
             nimg -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
             nimg /= meanstd[3][np.newaxis, :, np.newaxis, np.newaxis]
             grads, l = net.bprop(qimg, pimg, nimg, ptag, ntag)
+            if cfg.debug:
+                print('-------------prams---------------')
             for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
+                if cfg.debug:
+                    print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
                 sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
             loss = update_perf(loss, l.l1())
             t3 = time.time()
@@ -63,7 +67,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
             best_loss = loss
             nb_epoch_after_best = 0
             if best_loss < cfg.margin:
-                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch), 50, use_pickle=True)
+                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
         else:
             nb_epoch_after_best += 1
             if nb_epoch_after_best > 4:
@@ -72,7 +76,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
                 cfg.lr /= 10
                 print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
                 logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
-        net.save(os.path.join(cfg.param_dir, 'model'), 50, use_pickle=True)
+        net.save(os.path.join(cfg.param_dir, 'model'))
 
 
 if __name__ == '__main__':
