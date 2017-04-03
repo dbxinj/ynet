@@ -258,7 +258,7 @@ class CANIN(CANet):
         da, dp, dn = self.loss.backward()
         return self.backward(da, dp, dn), loss
 
-    def evalute(self, qimg, pimg, nimg, ptag, ntag):
+    def evaluate(self, qimg, pimg, nimg, ptag, ntag):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(False, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(False, a, p, n)

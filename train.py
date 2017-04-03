@@ -31,7 +31,9 @@ def train(cfg, net, meanstd, train_data, val_data=None):
         train_data.do_shuffle()
         train_data.start(train_data.load_triples)
         for b in bar:
+            t1 = time.time()
             qimg, pimg, nimg, ptag, ntag = train_data.next()
+            t2 = time.time()
             qimg -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
             qimg /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
             pimg -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
@@ -42,7 +44,8 @@ def train(cfg, net, meanstd, train_data, val_data=None):
             for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
                 sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
             loss = update_perf(loss, l.l1())
-            bar.set_postfix(train_loss=loss)
+            t3 = time.time()
+            bar.set_postfix(train_loss=loss, bptime=t3-t2, load_time=t2-t1)
 
         if val_data == None:
             continue
