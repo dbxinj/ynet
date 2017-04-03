@@ -23,12 +23,10 @@ class L2Norm(layer.Layer):
             return x.div_column(norm)
 
     def backward(self, dy):
-        # (b - b * k) /norm, k = sum(dy * y)
+        # (b' - b * k) /norm, k = sum(dy * y)
         k = tensor.sum_columns(dy * self.y)
-        dx = dy
-        dx -= self.y.mult_columns(-k)
-        dx /= self.norm
-        return dx
+        dx = dy - self.y.mult_columns(k)
+        return dx.div_columns(self.norm)
 
 
 class TripletLoss(loss.Loss):

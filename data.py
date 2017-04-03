@@ -60,7 +60,7 @@ class DataIter(object):
             self.terminate()
             sys.exit(1)
 
-    def start(self, func, nproc=4):
+    def start(self, func, nproc=2):
         # func to be load_triples, load_street_images, load_shop_images
         while not self.queue.empty():
             self.queue.get()
@@ -89,7 +89,7 @@ class DataIter(object):
         random.shuffle(self.idx)
 
     def load_triples(self, proc_id, nproc):
-        nbatch = len(self.shop_image) // self.batchsize
+        nbatch = len(self.image_pair) // self.batchsize
         nbatch_per_proc = nbatch // nproc
         batch_start = nbatch_per_proc * proc_id
         if proc_id == nproc - 1:
@@ -117,9 +117,10 @@ class DataIter(object):
                 self.queue.put((qimgs, pimgs, ptags, nimgs, ntags))
             else:
                 time.sleep(0.1)
+        print('finish load triples')
 
     def load_street_images(self, proc_id, nproc):
-        nbatch = len(self.shop_image) // self.batchsize
+        nbatch = len(self.image_pair) // self.batchsize
         nbatch_per_proc = nbatch // nproc
         batch_start = nbatch_per_proc * proc_id
         if proc_id == nproc - 1:
@@ -128,13 +129,15 @@ class DataIter(object):
         for b in range(batch_start, batch_start + nbatch_per_proc):
             if not self.queue.full():
                 qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
+                items = []
                 for i, rec in enumerate(self.image_pair[b * self.batchsize: (b + 1) * self.batchsize]):
                     qimgs[i, :] = self.read_image(rec[0])
-                    item = rec[2]
+                    items.append(rec[2])
                 # enqueue one mini-batch
-                self.queue.put((qimgs, item))
+                self.queue.put((qimgs, items))
             else:
                 time.sleep(0.1)
+        print('finish load street')
 
     def load_shop_images(self, proc_id, nproc):
         nbatch = len(self.shop_image) // self.batchsize
@@ -156,6 +159,8 @@ class DataIter(object):
                 self.queue.put((imgs, items, tags))
             else:
                 time.sleep(0.1)
+        print('finish load shop images')
+
 
 class DARNDataIter(DataIter):
     def __init__(self, image_dir, pair_file, shop_file):
@@ -169,46 +174,56 @@ class FashionDataIter(DataIter):
         super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
 
 
-def calc_mean_std(data, func, nbatch):
-    r, g, b = 0, 0, 0
+def calc_mean_std(image_dir, data_dir):
+    data = DARNDataIter(image_dir, os.path.join(data_dir, 'sample_pair.txt'),
+        os.path.join(data_dir, 'train_shop.txt'))
+    qrgb = np.zeros((3,), dtype=np.float32)
+    nrgb = np.zeros((3,), dtype=np.float32)
     count = 0
-    data.start(func)
-    for i in trange(nbatch):
-        img,_ = data.next()
-        r += np.average(img[:, 0, :, :])
-        g += np.average(img[:, 1, :, :])
-        b += np.average(img[:, 2, :, :])
+    data.start(data.load_triples)
+    for i in trange(data.num_batches):
+        qimg, _, _, nimg, _ = data.next()
+        for (rgb, img) in zip([qrgb, nrgb], [qimg, nimg]):
+            for i in range(3):
+                rgb[i] += np.average(img[:, i, :, :])
         count += img.shape[0]
 
-    r /= count
-    g /= count
-    b /= count
+    qrgb /= count
+    nrgb /= count
 
-    vr, vg, vb = 0, 0, 0
-    data.start(func)
-    for i in trange(nbatch):
-        ary,_ = data.next()
-        dr = r - np.average(ary[:, 0, :, :])
-        dg = g - np.average(ary[:, 1, :, :])
-        db = b - np.average(ary[:, 2, :, :])
-        vr += dr * dr
-        vg += dg * dg
-        vb += db * db
+    qstd = np.zeros((3,), dtype=np.float32)
+    nstd = np.zeros((3,), dtype=np.float32)
 
-    vr = math.sqrt(vr / count)
-    vg = math.sqrt(vg / count)
-    vb = math.sqrt(vb / count)
+    data.start(data.load_triples)
+    for i in trange(data.num_batches):
+        qimg, _, _, nimg, _ = data.next()
+        for (mean, std, img) in zip([qrgb, nrgb], [qstd, nstd], [qimg, nimg]):
+            for i in range(3):
+                d =  mean[i] - np.average(img[:, i, :, :])
+                std += d * d
 
-    return np.array([[r, g, b], [vr, vg, vb]], dtype=np.float32)
+    qstd = math.sqrt(qstd / count)
+    nstd = math.sqrt(nstd / count)
+
+    return np.array([qrgb, qstd, nrgb, nstd], dtype=np.float32)
+
+
+def sample(data_dir, ratio=0.2):
+    with open(os.path.join(data_dir, 'train_pair.txt'), 'r') as fd:
+        lines = fd.readlines()
+    np.random.shuffle(lines)
+    with open(os.path.join(data_dir, 'sample_pair.txt'), 'w') as fd:
+        for line in lines[0: int(len(lines) * ratio)]:
+            fd.write(line)
+        fd.flush()
+
 
 if __name__ == '__main__':
-    image_dir = '/data/jixin/darn_dataset'
-    train_dat = DARNDataIter(image_dir, './data/darn/train_pair.txt', './data/darn/train_shop.txt')
+    image_dir = '/home/wangyan/darn_dataset' #'/data/jixin/darn_dataset'
+    sample('./data/darn/')
     # train_dat.start(train_dat.load_triples)
-    street_meta = calc_mean_std(train_dat, train_dat.load_street_images, train_dat.num_batches)
-    np.save('./data/darn/street_meta', street_meta)
-    shop_meta = calc_mean_std(train_dat, train_dat.load_shop_images, len(train_dat.shop_image) / train_dat.batchsize)
-    np.save('./data/darn/shop_meta', shop_meta)
+    meta = calc_mean_std(image_dir, './data/darn')
+    np.save('./data/darn/meta', meta)
     '''
     val_dat = DARNDataIter(image_dir, './data/darn/validation_pair.txt', './data/darn/validation_shop.txt')
     val_dat.start(val_dat.load_street_images)
