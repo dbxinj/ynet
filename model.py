@@ -8,29 +8,39 @@ import numpy as np
 
 
 class L2Norm(layer.Layer):
-    def __init__(self, input_sample_shape=None):
+    def __init__(self, name, input_sample_shape, epsilon=1e-6):
+        super(L2Norm, self).__init__(name)
         self.y = None
         self.norm = None
+        self.name = name
+        self.epsilon = epsilon
+        self.out_sample_shape=input_sample_shape
+
+    def get_output_sample_shape(self):
+        return self.out_sample_shape
 
     def forward(self, is_train, x):
-        squared_norm = tensor.sum_columns(x * x)
-        norm = tensor.sqrt(squared_norm)
-        if is_train:
-            self.y = x.div_column(norm)
-            self.norm = norm
-            return self.y
-        else:
-            return x.div_column(norm)
+        norm = tensor.sum_columns(tensor.square(x))
+        norm = tensor.sqrt(norm)
+        norm += self.epsilon
+        self.y = x.clone()
+        self.y.div_column(norm)
 
-    def backward(self, dy):
+        if is_train:
+            self.norm = norm
+        return self.y
+
+    def backward(self, is_train, dy):
         # (b' - b * k) /norm, k = sum(dy * y)
-        k = tensor.sum_columns(dy * self.y)
-        dx = dy - self.y.mult_columns(k)
-        return dx.div_columns(self.norm)
+        k = tensor.sum_columns(tensor.eltwise_mult(dy, self.y))
+        self.y.mult_column(k)
+        dx = dy - self.y
+        dx.div_column(self.norm)
+        return dx, []
 
 
 class TripletLoss(loss.Loss):
-    def __init__(self, margin=0.8):
+    def __init__(self, margin=0.1):
         self.margin = margin
         self.ga = None
         self.gp = None
@@ -38,13 +48,13 @@ class TripletLoss(loss.Loss):
 
     def forward(self, is_train, a, p, n):
         d_ap = a - p
-        d1 = tensor.sum_columns(d_ap * d_ap)
+        d1 = tensor.sum_columns(tensor.square(d_ap))
         d_an = a - n
-        d2 = tensor.sum_columns(d_an * d_an)
+        d2 = tensor.sum_columns(tensor.square(d_an))
         d = d1 - d2
         d += self.margin
         sign = d > 0
-        loss = d.sum() * sign
+        loss = tensor.eltwise_mult(d, sign)
         batchsize = float(a.shape[0])
         if is_train:
             self.ga = (n - p) * (2 / batchsize)
@@ -59,18 +69,17 @@ class TripletLoss(loss.Loss):
         return self.ga, self.gp, self.gn
 
 
-class CANet():
+class CANet(object):
     '''Context-depedent attention modeling'''
-    def __init__(self, name, loss, dev, batchsize=32):
+    def __init__(self, name, loss, dev, batchsize=32, debug=True):
+        self.debug = debug
         self.name = name
         self.loss = loss
         self.device = dev
         self.batchsize = batchsize
         self.layers = []
-        self.create_net(batchsize)
-        self.to_device(dev)
 
-    def create_net(self, batchsize=32):
+    def create_net(self, name, batchsize=32):
         pass
 
     def to_device(self, dev):
@@ -80,25 +89,14 @@ class CANet():
     def param_names(self):
         pname = []
         for lyr in self.layers:
-            pname.extends(lyr.param_names())
+            pname.extend(lyr.param_names())
         return pname
 
     def param_values(self):
         pvals = []
         for lyr in self.layers:
-            pvals.extends(lyr.param_values())
+            pvals.extend(lyr.param_values())
         return pvals
-
-    def init_params(net, weight_path=None):
-        if weight_path is None:
-            for pname, pval in zip(net.param_names(), net.param_values()):
-                print pname, pval.shape
-                if 'conv' in pname and len(pval.shape) > 1:
-                    initializer.gaussian(pval, 0, pval.shape[1])
-                else:
-                    pval.set_value(0)
-        else:
-            net.load(weight_path, use_pickle=True)
 
     def extract_query_feature(self, x):
         pass
@@ -113,98 +111,144 @@ class CANet():
         pass
 
     def save(self, fpath):
-        self.street_net.save(fpath, use_pickle=True)
-        self.shop_net.save(fpath, use_pickle=True)
+        params = {}
+        for (name, val) in zip(self.param_names(), self.param_values()):
+            val.to_host()
+            params[name] = tensor.to_numpy(val)
+            with open(fpath, 'wb') as fd:
+                pickle.dump(params, fd)
 
     def load(self, fpath):
-        self.street_net.save(fpath, use_pickle=True)
-        self.shop_net.save(fpath, use_pickle=True)
+        with open(fpath, 'rb') as fd:
+                params = pickle.load(fd)
+                for name, val in zip(self.param_names(), self.param_values()):
+                    if name not in params:
+                        print 'Param: %s missing in the checkpoint file' % name
+                        continue
+                    try:
+                        val.copy_from_numpy(params[name])
+                    except AssertionError as err:
+                        print 'Error from copying values for param: %s' % name
+                        print 'shape of param vs checkpoint', \
+                                val.shape, params[name].shape
+                        raise err
+
+    def init_params(self, weight_path=None):
+        if weight_path is None:
+            for pname, pval in zip(self.param_names(), self.param_values()):
+                print pname, pval.shape
+                if 'conv' in pname and len(pval.shape) > 1:
+                    initializer.gaussian(pval, 0, pval.shape[1])
+                else:
+                    pval.set_value(0)
+        else:
+            self.load(weight_path)
 
 
 class CANIN(CANet):
-    def __init__(self, name, loss, dev, batchsize=32):
-        super(CANet, self).__init__(name, loss, dev, batchsize)
+    def __init__(self, name, loss, dev, batchsize=32, debug=True):
+        super(CANIN, self).__init__(name, loss, dev, batchsize, debug)
         self.shared, self.street, self.shop = self.create_net(name, batchsize)
-        self.layers.extends(self.shared)
-        self.layers.extends(self.street)
-        self.layers.extends(self.shop)
+        self.layers.extend(self.shared)
+        self.layers.extend(self.street)
+        self.layers.extend(self.shop)
+        for lyr in self.layers:
+            print lyr.name, lyr.get_output_sample_shape()
+        self.to_device(dev)
 
-    def add_conv(layers, name, nb_filter, size, stride, pad=0, sample_size=None):
-        if sample_size != None:
+    def add_conv(self, layers, name, nb_filter, size, stride, pad=0, sample_shape=None):
+        if sample_shape != None:
             layers.append(Conv2D('%s-3x3' % name, nb_filter, size, stride, pad=pad,
-                           input_sample_shape=sample_size))
+                           input_sample_shape=sample_shape))
         else:
             layers.append(Conv2D('%s-3x3' % name, nb_filter, size, stride, pad=pad,
                            input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Activation('%s-3x3-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Conv2D('%s-1x1-1' % name, nb_filter, 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
-        layers.append(Activation('%s-1x1-1-relu', input_sample_shape=layers[-1].get_output_sample_shape()))
-        layers.append(Conv2D('%s-1x1-2', nb_filter, 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
+        layers.append(Activation('%s-1x1-1-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
+        layers.append(Conv2D('%s-1x1-2' % name, nb_filter, 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Activation('%s-1x1-2-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
 
 
-    def create_net(self, batchsize=32):
+    def create_net(self, name, batchsize=32):
         shared = []
 
-        self.add_conv(shared, 'c1', 96, 7, 2, sample_size=(3, 277, 277))
-        shared.append(MaxPooling2D('p1', 3, 2), input_sample_shape=shared[-1].get_output_sample_shape())
+        self.add_conv(shared, 'conv1', 96, 7, 2, sample_shape=(3, 277, 277))
+        shared.append(MaxPooling2D('p1', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        self.add_conv(shared, 'c2', 256, 5, 2, 2)
-        shared.append(MaxPooling2D('p2', 3, 2), input_sample_shape=shared[-1].get_output_sample_shape())
+        self.add_conv(shared, 'conv2', 256, 5, 2, 2)
+        shared.append(MaxPooling2D('p2', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        self.add_conv(shared, 'c3', 384, 3, 1, 1)
-        shared.append(MaxPooling2D('p3', 3, 2), input_sample_shape=shared[-1].get_output_sample_shape())
+        self.add_conv(shared, 'conv3', 384, 3, 1, 1)
+        shared.append(MaxPooling2D('p3', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
         slice_layer = Slice('slice', 0, [batchsize], input_sample_shape=shared[-1].get_output_sample_shape())
         shared.append(slice_layer)
 
         street = []
-        self.add_conv(street, 'steet-c4', 512, 3, 1, 1, input_sample_shape=slice_layer.get_output_sample_shape()[0])
-        street.append(AvgPooling2D('street-p4', 3, 2, input_sample_shape=street[-1].get_output_sample_shape()[1]))
+        self.add_conv(street, 'steet-conv4', 512, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        street.append(AvgPooling2D('street-p4', 9, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(Flatten('street-flat', input_sample_shape=street[-1].get_output_sample_shape()))
-        #street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
+        street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
 
         shop = []
-        self.add_conv(street, 'shop-c4', 512, 3, 1, 1, input_sample_shape=slice_layer.get_output_sample_shape()[1])
-        street.append(AvgPooling2D('shop-p4', 3, 2, input_sample_shape=shop[-1].get_output_sample_shape()))
-        street.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
-        #street.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
-        street.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
+        self.add_conv(shop, 'shop-conv4', 512, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        shop.append(AvgPooling2D('shop-p4', 9, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
 
         return shared, street, shop
 
     def forward(self, is_train, qimg, pimg, nimg, ptag, ntag):
+        if self.debug:
+            print '------------forward------------'
         x = np.concatenate((qimg, pimg, nimg), axis=0)
         x = tensor.from_numpy(x)
+        x.to_device(self.device)
         for lyr in self.shared:
+            if self.debug:
+                print lyr.name, x.shape, x.l1()
             x = lyr.forward(is_train, x)
         a, b = x
         for lyr in self.street:
+            if self.debug:
+                print lyr.name, a.shape, a.l1()
             a = lyr.forward(is_train, a)
         for lyr in self.shop:
+            if self.debug:
+                print lyr.name, b.shape, b.l1()
             b = lyr.forward(is_train, b)
         p, n = b
+        if self.debug:
+            print p.shape, n.shape
         return a, p, n
 
     def backward(self, da, dp, dn):
+        if self.debug:
+            print '------------backward------------'
         param_grads = []
-        ds, _ = self.shop[-1].backward(True, [dp, dn])
-        dshop = ds[0]
-        for lyr in self.shop[0:-2].reverse():
+        dshop = [dp, dn]
+        for lyr in self.shop[::-1]:
             dshop, dp = lyr.backward(True, dshop)
+            if self.debug:
+                print lyr.name, dshop.shape, dshop.l1()
             if dp is not None:
-                param_grads.extends(reversed(dp))
+                param_grads.extend(dp[::-1])
 
-        for lyr in self.street.reverse():
+        for lyr in self.street[::-1]:
             da, dp = lyr.backward(True, da)
+            if self.debug:
+                print lyr.name, da.shape, da.l1()
             if dp is not None:
-                param_grads.extends(reversed(dp))
+                param_grads.extend(dp[::-1])
 
-        ds, _ = self.shared[-1].backward(True, [da, dshop])
-        d = ds[0]
-        for lyr in self.shared.reverse():
+        d = [da, dshop]
+        for lyr in self.shared[::-1]:
             d, dp = lyr.backward(True, d)
+            if self.debug:
+                print lyr.name, d.shape, d.l1()
             if dp is not None:
-                param_grads.extends(reversed(dp))
+                param_grads.extend(dp[::-1])
         return param_grads
 
     def bprop(self, qimg, pimg, nimg, ptag, ntag):
@@ -212,10 +256,10 @@ class CANIN(CANet):
         a, p, n = self.forward(True, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(True, a, p, n)
         da, dp, dn = self.loss.backward()
-        return loss.sum() / qimg.shape[0], self.backward(self, da, dp, dn)
+        return self.backward(da, dp, dn), loss
 
     def evalute(self, qimg, pimg, nimg, ptag, ntag):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(False, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(False, a, p, n)
-        return loss.sum() / qimg.shape[0]
+        return loss

@@ -14,13 +14,13 @@ validate_tool = image_tool.ImageTool()
 
 class DataIter(object):
     def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr,
-                 batchsize=32, capacity=50, shuffle=True, delimiter=' ',
-                 image_size=224):
+                 batchsize=32, capacity=50, delimiter=' ',
+                 image_size=224, nproc=3):
         self.batchsize = batchsize
         self.image_folder = image_dir
         self.image_size = image_size
         self.capacity = capacity
-        self.shuffle = shuffle
+        self.nproc = nproc
         self.proc = []  # for loading triplet
         self.queue = Queue(capacity)
         self.image_pair = []
@@ -60,12 +60,12 @@ class DataIter(object):
             self.terminate()
             sys.exit(1)
 
-    def start(self, func, nproc=2):
+    def start(self, func):
         # func to be load_triples, load_street_images, load_shop_images
         while not self.queue.empty():
             self.queue.get()
-        for i in range(nproc):
-            self.proc.append(Process(target=func, args=(i, nproc)))
+        for i in range(self.nproc):
+            self.proc.append(Process(target=func, args=(i, self.nproc)))
             time.sleep(0.4)
             self.proc[-1].start()
 
@@ -85,7 +85,7 @@ class DataIter(object):
         vec[tags] = 1.0
         return vec
 
-    def shuffle(self):
+    def do_shuffle(self):
         random.shuffle(self.idx)
 
     def load_triples(self, proc_id, nproc):
@@ -94,7 +94,8 @@ class DataIter(object):
         batch_start = nbatch_per_proc * proc_id
         if proc_id == nproc - 1:
             nbatch_per_proc += nbatch % nproc
-        for b in range(batch_start, batch_start + nbatch_per_proc):
+        b = batch_start
+        while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
                 qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 pimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
@@ -114,7 +115,8 @@ class DataIter(object):
                     nimgs[i] = self.read_image(self.shop_image[nidx][0])
                     ntags[i] = self.tag2vec(self.shop_image[nidx][2])
                 # enqueue one mini-batch
-                self.queue.put((qimgs, pimgs, ptags, nimgs, ntags))
+                self.queue.put((qimgs, pimgs, nimgs, ptags, ntags))
+                b += 1
             else:
                 time.sleep(0.1)
         print('finish load triples')
@@ -126,7 +128,8 @@ class DataIter(object):
         if proc_id == nproc - 1:
             nbatch_per_proc += nbatch % nproc
         # self.queue = Queue(self.capacity)
-        for b in range(batch_start, batch_start + nbatch_per_proc):
+        b = batch_start
+        while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
                 qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 items = []
@@ -135,6 +138,7 @@ class DataIter(object):
                     items.append(rec[2])
                 # enqueue one mini-batch
                 self.queue.put((qimgs, items))
+                b += 1
             else:
                 time.sleep(0.1)
         print('finish load street')
@@ -146,7 +150,8 @@ class DataIter(object):
         if proc_id == nproc - 1:
             nbatch_per_proc += nbatch % nproc
         # self.queue = Queue(self.capacity)
-        for b in range(batch_start, batch_start + nbatch_per_proc):
+        b = batch_start
+        while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
                 imgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
                 tags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
@@ -157,6 +162,7 @@ class DataIter(object):
                     tags[i] = self.tag2vec(rec[2])
                 # enqueue one mini-batch
                 self.queue.put((imgs, items, tags))
+                b += 1
             else:
                 time.sleep(0.1)
         print('finish load shop images')
@@ -182,7 +188,7 @@ def calc_mean_std(image_dir, data_dir):
     count = 0
     data.start(data.load_triples)
     for i in trange(data.num_batches):
-        qimg, _, _, nimg, _ = data.next()
+        qimg, _, nimg, _,  _ = data.next()
         for (rgb, img) in zip([qrgb, nrgb], [qimg, nimg]):
             for i in range(3):
                 rgb[i] += np.average(img[:, i, :, :])
@@ -196,14 +202,14 @@ def calc_mean_std(image_dir, data_dir):
 
     data.start(data.load_triples)
     for i in trange(data.num_batches):
-        qimg, _, _, nimg, _ = data.next()
+        qimg, _, nimg, _,  _ = data.next()
         for (mean, std, img) in zip([qrgb, nrgb], [qstd, nstd], [qimg, nimg]):
             for i in range(3):
                 d =  mean[i] - np.average(img[:, i, :, :])
                 std += d * d
 
-    qstd = math.sqrt(qstd / count)
-    nstd = math.sqrt(nstd / count)
+    qstd = np.sqrt(qstd / count)
+    nstd = np.sqrt(nstd / count)
 
     return np.array([qrgb, qstd, nrgb, nstd], dtype=np.float32)
 
@@ -220,7 +226,7 @@ def sample(data_dir, ratio=0.2):
 
 if __name__ == '__main__':
     image_dir = '/home/wangyan/darn_dataset' #'/data/jixin/darn_dataset'
-    sample('./data/darn/')
+    # sample('./data/darn/')
     # train_dat.start(train_dat.load_triples)
     meta = calc_mean_std(image_dir, './data/darn')
     np.save('./data/darn/meta', meta)
