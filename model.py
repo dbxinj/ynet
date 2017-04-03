@@ -23,10 +23,10 @@ class L2Norm(layer.Layer):
             return x.div_column(norm)
 
     def backward(self, dy):
-        # (1 - b * k) /norm, k = sum(dy * y)
+        # (b - b * k) /norm, k = sum(dy * y)
         k = tensor.sum_columns(dy * self.y)
-        dx = self.y.mult_columns(-k)
-        dx += float(1)
+        dx = dy
+        dx -= self.y.mult_columns(-k)
         dx /= self.norm
         return dx
 
@@ -63,13 +63,21 @@ class TripletLoss(loss.Loss):
 
 class CANet():
     '''Context-depedent attention modeling'''
-    def __init__(self, name, loss, batchsize=32):
+    def __init__(self, name, loss, dev, batchsize=32):
         self.name = name
         self.loss = loss
+        self.device = dev
+        self.batchsize = batchsize
         self.layers = []
+        self.create_net(batchsize)
+        self.to_device(dev)
 
     def create_net(self, batchsize=32):
         pass
+
+    def to_device(self, dev):
+        for lyr in self.layers:
+            lyr.to_device(dev)
 
     def param_names(self):
         pname = []
@@ -116,8 +124,8 @@ class CANet():
 
 
 class CANIN(CANet):
-    def __init__(self, name, loss, batchsize=32):
-        super(CANet, self).__init__(name, loss, batchsize)
+    def __init__(self, name, loss, dev, batchsize=32):
+        super(CANet, self).__init__(name, loss, dev, batchsize)
         self.shared, self.street, self.shop = self.create_net(name, batchsize)
         self.layers.extends(self.shared)
         self.layers.extends(self.street)
@@ -168,6 +176,7 @@ class CANIN(CANet):
 
     def forward(self, is_train, qimg, pimg, nimg, ptag, ntag):
         x = np.concatenate((qimg, pimg, nimg), axis=0)
+        x = tensor.from_numpy(x)
         for lyr in self.shared:
             x = lyr.forward(is_train, x)
         a, b = x
@@ -201,12 +210,14 @@ class CANIN(CANet):
         return param_grads
 
     def bprop(self, qimg, pimg, nimg, ptag, ntag):
+        assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(True, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(True, a, p, n)
         da, dp, dn = self.loss.backward()
         return loss.sum() / qimg.shape[0], self.backward(self, da, dp, dn)
 
     def evalute(self, qimg, pimg, nimg, ptag, ntag):
+        assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(False, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(False, a, p, n)
         return loss.sum() / qimg.shape[0]

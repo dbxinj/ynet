@@ -1,6 +1,7 @@
 import random
 import numpy as np
 import time
+import math
 import os
 import sys
 from multiprocessing import Process, Queue
@@ -168,13 +169,47 @@ class FashionDataIter(DataIter):
         super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
 
 
+def calc_mean_std(data, func, nbatch):
+    r, g, b = 0, 0, 0
+    count = 0
+    data.start(func)
+    for i in trange(nbatch):
+        img,_ = data.next()
+        r += np.average(img[:, 0, :, :])
+        g += np.average(img[:, 1, :, :])
+        b += np.average(img[:, 2, :, :])
+        count += img.shape[0]
+
+    r /= count
+    g /= count
+    b /= count
+
+    vr, vg, vb = 0, 0, 0
+    data.start(func)
+    for i in trange(nbatch):
+        ary,_ = data.next()
+        dr = r - np.average(ary[:, 0, :, :])
+        dg = g - np.average(ary[:, 1, :, :])
+        db = b - np.average(ary[:, 2, :, :])
+        vr += dr * dr
+        vg += dg * dg
+        vb += db * db
+
+    vr = math.sqrt(vr / count)
+    vg = math.sqrt(vg / count)
+    vb = math.sqrt(vb / count)
+
+    return np.array([[r, g, b], [vr, vg, vb]], dtype=np.float32)
+
 if __name__ == '__main__':
     image_dir = '/data/jixin/darn_dataset'
     train_dat = DARNDataIter(image_dir, './data/darn/train_pair.txt', './data/darn/train_shop.txt')
-    train_dat.start(train_dat.load_triples)
-    for i in trange(train_dat.num_batches):
-        train_dat.next()
-
+    # train_dat.start(train_dat.load_triples)
+    street_meta = calc_mean_std(train_dat, train_dat.load_street_images, train_dat.num_batches)
+    np.save('./data/darn/street_meta', street_meta)
+    shop_meta = calc_mean_std(train_dat, train_dat.load_shop_images, len(train_dat.shop_image) / train_dat.batchsize)
+    np.save('./data/darn/shop_meta', shop_meta)
+    '''
     val_dat = DARNDataIter(image_dir, './data/darn/validation_pair.txt', './data/darn/validation_shop.txt')
     val_dat.start(val_dat.load_street_images)
     for i in trange(val_dat.num_batches):
@@ -184,3 +219,4 @@ if __name__ == '__main__':
     val_dat.start(val_dat.load_shop_images)
     for i in trange(len(val_dat.shop_image) / val_dat.batchsize):
         val_dat.next()
+    '''
