@@ -67,7 +67,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
         if loss < best_loss - cfg.gama:
             best_loss = loss
             nb_epoch_after_best = 0
-            if best_loss < cfg.margin:
+            if best_loss < cfg.margin/2:
                 net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
         else:
             nb_epoch_after_best += 1
@@ -84,17 +84,19 @@ if __name__ == '__main__':
     parser = ArgumentParser(description="Context-depedent attention modeling")
     parser.add_argument("--batchsize", type=int, default=32)
     parser.add_argument("--max_epoch", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--mom", type=float, default=0.9)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
+    parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--dataset", choices=['darn', 'fashion'], default='darn')
     parser.add_argument("--gama", type=float, default=0.01, help='delta theta threshold')
-    parser.add_argument("--margin", type=float, default=0.1, help='margin for the triplet loss')
+    parser.add_argument("--margin", type=float, default=0.2, help='margin for the triplet loss')
     parser.add_argument("--param_dir", default='param')
     parser.add_argument("--data_dir", default='data')
     parser.add_argument("--image_dir", default='/home/wangyan/darn_dataset')
     parser.add_argument("--param_path", help='param pickle file path')
     parser.add_argument("--debug", action="store_true")
+    parser.add_argument("--nproc", type=int, default=2, help='num of data loading process')
+    parser.add_argument("--gpu", type=int, default=0, help='gpu id')
     args = parser.parse_args()
 
     # args = random_gen_args(args)
@@ -109,14 +111,14 @@ if __name__ == '__main__':
     val_shop = os.path.join(data_dir, 'validation_shop.txt')
 
     if args.dataset == 'darn':
-        train_data = DARNDataIter(args.image_dir, train_pair, train_shop)
-        val_data = DARNDataIter(args.image_dir, val_pair, val_shop)
+        train_data = DARNDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
+        val_data = DARNDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
     elif args.dataset == 'fashion':
-        train_data = FashionDataIter(args.image_dir, train_pair, train_shop)
-        val_data = FashionDataIter(args.image_dir, val_pair, val_shop)
+        train_data = FashionDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
+        val_data = FashionDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
     else:
         print('Unknown dataset name')
-    dev = device.create_cuda_gpu_on(2)
+    dev = device.create_cuda_gpu_on(args.gpu)
     net = model.CANIN('canet', model.TripletLoss(args.margin), dev, batchsize=args.batchsize, debug=args.debug)
     net.init_params(args.param_path)
     train(args, net, meanstd, train_data, val_data)

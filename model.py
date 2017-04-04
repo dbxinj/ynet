@@ -187,13 +187,13 @@ class CANIN(CANet):
         shared.append(slice_layer)
 
         street = []
-        self.add_conv(street, 'steet-conv4', 512, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        self.add_conv(street, 'steet-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
         street.append(AvgPooling2D('street-p4', 9, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(Flatten('street-flat', input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
 
         shop = []
-        self.add_conv(shop, 'shop-conv4', 512, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        self.add_conv(shop, 'shop-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         shop.append(AvgPooling2D('shop-p4', 9, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
