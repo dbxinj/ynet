@@ -16,7 +16,7 @@ validate_tool = image_tool.ImageTool()
 class DataIter(object):
     def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr,
                  batchsize=32, capacity=50, delimiter=' ',
-                 image_size=224, nproc=4):
+                 image_size=224, nproc=2):
         self.batchsize = batchsize
         self.image_folder = image_dir
         self.image_size = image_size
@@ -177,9 +177,9 @@ class DataIter(object):
 
 
 class DARNDataIter(DataIter):
-    def __init__(self, image_dir, pair_file, shop_file, batchsize=32):
+    def __init__(self, image_dir, pair_file, shop_file, batchsize=32, nproc=1):
         self.ntags_per_attr = [20, 56, 10, 25, 27, 16, 7, 12, 6]
-        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32)
+        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32, nproc=nproc)
 
 
 class FashionDataIter(DataIter):
