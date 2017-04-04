@@ -87,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
-    parser.add_argument("--dataset", choices=['darn', 'fashion'], default='darn')
+    parser.add_argument("--dataset", choices=['darn', 'deepfashion'], default='darn')
     parser.add_argument("--gama", type=float, default=0.01, help='delta theta threshold')
     parser.add_argument("--margin", type=float, default=0.2, help='margin for the triplet loss')
     parser.add_argument("--param_dir", default='param')
@@ -99,10 +99,6 @@ if __name__ == '__main__':
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
     args = parser.parse_args()
 
-    # args = random_gen_args(args)
-    args.param_dir = os.path.join(args.param_dir, args.dataset)
-    os.makedirs(args.param_dir)
-
     data_dir = os.path.join(args.data_dir, args.dataset)
     meanstd = np.load(os.path.join(data_dir, 'meta.npy'))
     train_pair = os.path.join(data_dir, 'train_pair.txt')
@@ -113,7 +109,7 @@ if __name__ == '__main__':
     if args.dataset == 'darn':
         train_data = DARNDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
         val_data = DARNDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
-    elif args.dataset == 'fashion':
+    elif args.dataset == 'deepfashion':
         train_data = FashionDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
         val_data = FashionDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
     else:
@@ -121,4 +117,7 @@ if __name__ == '__main__':
     dev = device.create_cuda_gpu_on(args.gpu)
     net = model.CANIN('canet', model.TripletLoss(args.margin), dev, batchsize=args.batchsize, debug=args.debug)
     net.init_params(args.param_path)
+    # args = random_gen_args(args)
+    args.param_dir = os.path.join(args.param_dir, args.dataset)
+    os.makedirs(args.param_dir)
     train(args, net, meanstd, train_data, val_data)
