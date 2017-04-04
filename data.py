@@ -1,16 +1,17 @@
 import random
 import numpy as np
 import time
-import math
 import os
 import sys
 from multiprocessing import Process, Queue
 from tqdm import trange
+# import cv2
 
 from singa import image_tool
 
 train_tool = image_tool.ImageTool()
 validate_tool = image_tool.ImageTool()
+
 
 class DataIter(object):
     def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr,
@@ -79,6 +80,13 @@ class DataIter(object):
         img = image_tool.load_img(path).resize((self.image_size, self.image_size))
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary.transpose(2, 0, 1)
+        '''
+        img = cv2.imread(path)
+        img = cv2.resize(img, (self.image_size, self.image_size))
+        img = img.transpose((2, 0, 1))
+        img.astype('float32')
+        return img
+        '''
 
     def tag2vec(self, tags):
         vec = np.zeros((self.tag_dim,), dtype=np.float32)
@@ -169,15 +177,15 @@ class DataIter(object):
 
 
 class DARNDataIter(DataIter):
-    def __init__(self, image_dir, pair_file, shop_file):
+    def __init__(self, image_dir, pair_file, shop_file, batchsize=32):
         self.ntags_per_attr = [20, 56, 10, 25, 27, 16, 7, 12, 6]
-        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227)
+        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32)
 
 
 class FashionDataIter(DataIter):
-    def __init__(self, image_dir, pair_file, shop_file):
+    def __init__(self, image_dir, pair_file, shop_file, batchsize=32):
         self.ntags_per_attr = []
-        super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr)
+        super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, batchsize=32)
 
 
 def calc_mean_std(image_dir, data_dir):
@@ -224,13 +232,38 @@ def sample(data_dir, ratio=0.2):
         fd.flush()
 
 
+def benchmark1():
+    # print 'cv2 optimized ', cv2.useOptimized()
+    image_dir = '/data/jixin/darn_dataset'
+    data = DARNDataIter(image_dir, './data/darn/train_pair.txt', './data/darn/train_shop.txt', batchsize=50)
+    t = time.time()
+    for i in trange(50):
+        fpath, _, _ = data.shop_image[i]
+        data.read_image(fpath)
+    print('time per image = %f' % ((time.time() - t)/50))
+
+    t = time.time()
+    data.load_triples(0, data.num_batches)
+    print('time per triple = %f' % ((time.time() - t)/50))
+
+
+def benchmark2():
+    image_dir = '/data/jixin/darn_dataset'
+    data = DARNDataIter(image_dir, './data/darn/train_pair.txt', './data/darn/train_shop.txt', batchsize=32, nproc=1)
+    data.start(data.load_triples)
+    for i in trange(50):
+        data.next()
+    data.stop()
+
+
 if __name__ == '__main__':
-    image_dir = '/home/wangyan/darn_dataset' #'/data/jixin/darn_dataset'
+    #benchmark1()
+    benchmark2()
     # sample('./data/darn/')
-    # train_dat.start(train_dat.load_triples)
+    '''
+    image_dir = '/home/wangyan/darn_dataset' #'/data/jixin/darn_dataset'
     meta = calc_mean_std(image_dir, './data/darn')
     np.save('./data/darn/meta', meta)
-    '''
     val_dat = DARNDataIter(image_dir, './data/darn/validation_pair.txt', './data/darn/validation_shop.txt')
     val_dat.start(val_dat.load_street_images)
     for i in trange(val_dat.num_batches):
