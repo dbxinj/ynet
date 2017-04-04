@@ -3,26 +3,27 @@ from singa import initializer
 from singa import layer
 from singa import loss
 from singa import tensor
+import cPickle as pickle
 
 import numpy as np
 
 
 class L2Norm(layer.Layer):
-    def __init__(self, name, input_sample_shape, epsilon=1e-6):
+    def __init__(self, name, input_sample_shape, epsilon=1e-8):
         super(L2Norm, self).__init__(name)
         self.y = None
         self.norm = None
         self.name = name
         self.epsilon = epsilon
-        self.out_sample_shape=input_sample_shape
+        self.out_sample_shape = input_sample_shape
 
     def get_output_sample_shape(self):
         return self.out_sample_shape
 
     def forward(self, is_train, x):
         norm = tensor.sum_columns(tensor.square(x))
-        norm = tensor.sqrt(norm)
         norm += self.epsilon
+        norm = tensor.sqrt(norm)
         self.y = x.clone()
         self.y.div_column(norm)
 
@@ -52,8 +53,9 @@ class TripletLoss(loss.Loss):
         d_an = a - n
         d2 = tensor.sum_columns(tensor.square(d_an))
         d = d1 - d2
+        dist = d.l1()
         d += self.margin
-        sign = d > 0
+        sign = d > float(0)
         loss = tensor.eltwise_mult(d, sign)
         batchsize = float(a.shape[0])
         if is_train:
@@ -63,7 +65,7 @@ class TripletLoss(loss.Loss):
             self.gp.mult_column(sign)
             self.gn = d_an * (2 / batchsize)
             self.gn.mult_column(sign)
-        return loss
+        return (loss.l1(), dist)
 
     def backward(self):
         return self.ga, self.gp, self.gn
@@ -259,6 +261,8 @@ class CANIN(CANet):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(True, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(True, a, p, n)
+        if self.debug:
+            print tensor.to_numpy(loss)
         da, dp, dn = self.loss.backward()
         return self.backward(da, dp, dn), loss
 
