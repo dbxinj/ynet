@@ -27,7 +27,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
     best_loss = 1000
     for epoch in range(cfg.max_epoch):
         bar = trange(train_data.num_batches, desc='Epoch %d' % epoch)
-        loss, dist = 0, 0
+        loss, dap, dan = 0, 0, 0
         train_data.do_shuffle()
         train_data.start(train_data.load_triples)
         for b in bar:
@@ -48,21 +48,26 @@ def train(cfg, net, meanstd, train_data, val_data=None):
                     print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
                 sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
             loss = update_perf(loss, l[0])
-            dist = update_perf(dist, l[1])
+            dap = update_perf(dap, l[1])
+            dan = update_perf(dan, l[2])
             t3 = time.time()
-            bar.set_postfix(train_loss=loss, dist=dist, bptime=t3-t2, load_time=t2-t1)
+            bar.set_postfix(train_loss=loss, dap=dap, dan=dan, bptime=t3-t2, load_time=t2-t1)
 
         if val_data == None:
             continue
 
         bar = trange(val_data.num_batches, desc='Epoch %d' % epoch)
-        loss = 0
+        loss, dap, dan = 0, 0, 0
         val_data.start(val_data.load_triples)
         for b in bar:
             qimg, pimg, nimg, ptag, ntag = val_data.next()
-            l, _= net.evaluate(qimg, pimg, nimg, ptag, ntag)
+            l, ap, an= net.evaluate(qimg, pimg, nimg, ptag, ntag)
             loss += l
-        print('Epoch %d, validation loss = %f' % (epoch, loss / val_data.num_batches))
+            dap += ap
+            dan += an
+        print('Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
+              (epoch, loss / val_data.num_batches, dap / val_data.num_batches,
+               dan / val_data.val_data.num_batches))
 
         if loss < best_loss - cfg.gama:
             best_loss = loss

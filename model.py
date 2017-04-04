@@ -53,7 +53,6 @@ class TripletLoss(loss.Loss):
         d_an = a - n
         d2 = tensor.sum_columns(tensor.square(d_an))
         d = d1 - d2
-        dist = d.l1()
         d += self.margin
         sign = d > float(0)
         loss = tensor.eltwise_mult(d, sign)
@@ -65,7 +64,7 @@ class TripletLoss(loss.Loss):
             self.gp.mult_column(sign)
             self.gn = d_an * (2 / batchsize)
             self.gn.mult_column(sign)
-        return (loss.l1(), dist)
+        return (loss.l1(), d1.l1(), d2.l1())
 
     def backward(self):
         return self.ga, self.gp, self.gn
