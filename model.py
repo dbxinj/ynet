@@ -254,7 +254,7 @@ class CANIN(CANet):
                 print('%30s = %2.8f' % (lyr.name, d.l1()))
             if dp is not None:
                 param_grads.extend(dp[::-1])
-        return param_grads
+        return param_grads[::-1]
 
     def bprop(self, qimg, pimg, nimg, ptag, ntag):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])

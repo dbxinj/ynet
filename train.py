@@ -46,6 +46,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
             for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
                 if cfg.debug:
                     print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
+#                print pname, pgrad.shape, pval.shape
                 sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
             loss = update_perf(loss, l[0])
             dap = update_perf(dap, l[1])
