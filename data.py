@@ -38,18 +38,21 @@ class DataIter(object):
         with open(pair_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset[0:len([vals[3:])]) if int(idx) != -1]
+                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset[0:len(vals[3:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), os.path.join(image_dir, vals[1]), vals[2], tags)
                 self.image_pair.append(record)
             self.num_batches = len(self.image_pair) / batchsize
+            self.query_size = self.num_batches * batchsize
             self.idx = range(len(self.image_pair))
 
         with open(shop_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset[0:len([vals[2:])]) if int(idx) != -1]
+                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset[0:len(vals[2:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), vals[1], tags)
                 self.shop_image.append(record)
+            self.shop_batches = len(self.shop_image) / batchsize
+            self.db_size = self.shop_batches * batchsize
 
     def next(self):
         assert self.proc is not None, 'call start before next'
@@ -186,7 +189,7 @@ class DARNDataIter(DataIter):
 
 class FashionDataIter(DataIter):
     def __init__(self, image_dir, pair_file, shop_file, img_size, batchsize=32, nproc=1):
-        self.ntags_per_attr =  170
+        self.ntags_per_attr =  350
         super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, img_size=img_size, batchsize=32, nproc=nproc)
 
 

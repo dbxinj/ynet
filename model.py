@@ -6,6 +6,14 @@ from singa import tensor
 import cPickle as pickle
 
 import numpy as np
+import scipy.spatial
+from tqdm import trange
+
+
+def compute_precision(target):
+    ret = target.cumsum(axis=1)
+    prec = ret / np.arange(1.0, 1 + ret.shape[1])
+    return prec
 
 
 class L2Norm(layer.Layer):
@@ -100,11 +108,64 @@ class CANet(object):
             pvals.extend(lyr.param_values())
         return pvals
 
-    def extract_query_feature(self, x):
+    def extract_query_feature(self, x, y):
+        '''x for street images, y for shop image features'''
         pass
 
     def extract_db_feature(self, x, tag):
+        '''x for shop images'''
         pass
+
+    def retrieval(self, data, result_path, topk=1000):
+        bar = trange(data.shop_batches, desc='Database Image')
+        data.start(data.load_shop_images)
+        db_ids = []
+        db = None
+        for i in bar:
+            img, item, tag = data.next()
+            x = self.extract_db_feature(img, tag)
+            if db is None:
+                db = np.empty((data.db_size, x.shape[1]), dtype=np.float32)
+            db[i*x.shape[0]:(i+1)*x.shape[0]]=x
+
+        bar = trange(data.num_batches, desc='Query Image' % epoch)
+        data.start(data.load_street_images)
+        query_ids = []
+        query = None
+        for i in bar:
+            img, item = data.next()
+            x = self.extract_query_feature(img, None)
+            if db is None:
+                db = np.empty((data.query_size, x.shape[1]), dtype=np.float32)
+            db[i*x.shape[0]:(i+1)*x.shape[0]]=x
+
+        data.stop()
+
+        t = time.time()
+        dist=scipy.spatial.distance.cdist(query, db,'euclidean')
+        print('distance computation time = %f' % time.time() - t)
+        sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
+        np.save('%s-dist' % result_path, dist[sorted_idx])
+
+        K=100
+        target = np.empty((query.shape[0], K), dtype=np.bool)
+        for i in query.shape[0]:
+            for j in K:
+                target[i,j] = db_item[sorted_idx[i, j]] == query_ids[i]
+        np.save('%s-target' % result_path, target)
+
+        points = range(9, K+1, 10)
+        prec = compute_precision(target)
+        prec = np.average(prec[:, points], axis=0)
+        print 'Position  ',  points
+        print 'Precision ',  prec
+        np.savetxt('%s-precision.txt' % result_path, prec)
+
+        return query, db, sorted_idx
+
+    def rerank(self, query, db, candidate):
+        pass
+
 
     def bprop(self, qimg, pimg, nimg, ptag, ntag):
         pass
@@ -273,3 +334,24 @@ class CANIN(CANet):
         a, p, n = self.forward(False, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(False, a, p, n)
         return loss
+
+    def forward_layers(self, x, layers):
+        x = tensor.from_numpy(x)
+        x.to_device(self.device)
+        if self.debug:
+            print '------------forward------------'
+            print('%30s = %2.8f' % ('data', x.l1()))
+
+        for lyr in layers:
+            x = lyr.forward(is_train, x)
+            if self.debug:
+                if type(x) == tensor.Tensor:
+                    print('%30s = %2.8f' % (lyr.name, x.l1()))
+        return tensor.to_numpy(x)
+
+
+    def extract_query_feature(self, x, y):
+        return self.forward_layers(x, self.shared[0:-2] + self.street)
+
+    def extract_db_feature(self, x, tag):
+        return self.forward_layers(x, self.shared[0:-2] + self.street[0:-2])
