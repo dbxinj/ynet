@@ -68,7 +68,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
             dan += an
         print('Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
               (epoch, loss / val_data.num_batches, dap / val_data.num_batches,
-               dan / val_data.val_data.num_batches))
+               dan / val_data.num_batches))
 
         if loss < best_loss - cfg.gama:
             best_loss = loss
