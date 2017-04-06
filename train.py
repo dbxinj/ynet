@@ -69,8 +69,9 @@ def train(cfg, net, meanstd, train_data, val_data=None):
         print('Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
               (epoch, loss / val_data.num_batches, dap / val_data.num_batches,
                dan / val_data.num_batches))
+        net.retrieval(val_data, os.path.join(cfg.param_dir, 'result-%d-' % epoch) ,100)
 
-        if loss < best_loss - cfg.gama:
+        if loss < best_loss - cfg.margin/10:
             best_loss = loss
             nb_epoch_after_best = 0
             if best_loss < cfg.margin/2:
@@ -94,7 +95,6 @@ if __name__ == '__main__':
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--dataset", choices=['darn', 'deepfashion'], default='darn')
-    parser.add_argument("--gama", type=float, default=0.01, help='delta theta threshold')
     parser.add_argument("--margin", type=float, default=0.2, help='margin for the triplet loss')
     parser.add_argument("--param_dir", default='param')
     parser.add_argument("--data_dir", default='data')
