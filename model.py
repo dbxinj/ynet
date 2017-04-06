@@ -72,15 +72,16 @@ class TripletLoss(loss.Loss):
 
 class CANet(object):
     '''Context-depedent attention modeling'''
-    def __init__(self, name, loss, dev, batchsize=32, debug=True):
+    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=True):
         self.debug = debug
         self.name = name
         self.loss = loss
         self.device = dev
         self.batchsize = batchsize
+        self.img_size = img_size
         self.layers = []
 
-    def create_net(self, name, batchsize=32):
+    def create_net(self, name, img_size, batchsize=32):
         pass
 
     def to_device(self, dev):
@@ -141,20 +142,22 @@ class CANet(object):
                     initializer.gaussian(pval, 0, pval.shape[1])
                 else:
                     pval.set_value(0)
-                print pname, pval.shape, pval.l1()
+                if self.debug:
+                    print pname, pval.shape, pval.l1()
         else:
             self.load(weight_path)
 
 
 class CANIN(CANet):
-    def __init__(self, name, loss, dev, batchsize=32, debug=True):
-        super(CANIN, self).__init__(name, loss, dev, batchsize, debug)
-        self.shared, self.street, self.shop = self.create_net(name, batchsize)
+    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=True):
+        super(CANIN, self).__init__(name, loss, dev, img_size, batchsize, debug)
+        self.shared, self.street, self.shop = self.create_net(name, img_size, batchsize)
         self.layers.extend(self.shared)
         self.layers.extend(self.street)
         self.layers.extend(self.shop)
-        for lyr in self.layers:
-            print lyr.name, lyr.get_output_sample_shape()
+        if debug:
+            for lyr in self.layers:
+                print lyr.name, lyr.get_output_sample_shape()
         self.to_device(dev)
 
     def add_conv(self, layers, name, nb_filter, size, stride, pad=0, sample_shape=None):
@@ -171,10 +174,10 @@ class CANIN(CANet):
         layers.append(Activation('%s-1x1-2-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
 
 
-    def create_net(self, name, batchsize=32):
+    def create_net(self, name, img_size, batchsize=32):
         shared = []
 
-        self.add_conv(shared, 'conv1', 96, 7, 2, sample_shape=(3, 277, 277))
+        self.add_conv(shared, 'conv1', 96, 5, 2, sample_shape=(3, img_size, img_size))
         shared.append(MaxPooling2D('p1', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
 
         self.add_conv(shared, 'conv2', 256, 5, 2, 2)
@@ -187,13 +190,13 @@ class CANIN(CANet):
 
         street = []
         self.add_conv(street, 'steet-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
-        street.append(AvgPooling2D('street-p4', 9, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
+        street.append(AvgPooling2D('street-p4', 7, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(Flatten('street-flat', input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
 
         shop = []
         self.add_conv(shop, 'shop-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
-        shop.append(AvgPooling2D('shop-p4', 9, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(AvgPooling2D('shop-p4', 7, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
@@ -201,11 +204,13 @@ class CANIN(CANet):
         return shared, street, shop
 
     def forward(self, is_train, qimg, pimg, nimg, ptag, ntag):
-        if self.debug:
-            print '------------forward------------'
         x = np.concatenate((qimg, pimg, nimg), axis=0)
         x = tensor.from_numpy(x)
         x.to_device(self.device)
+        if self.debug:
+            print '------------forward------------'
+            print('%30s = %2.8f' % ('data', x.l1()))
+
         for lyr in self.shared:
             x = lyr.forward(is_train, x)
             if self.debug:
@@ -260,8 +265,6 @@ class CANIN(CANet):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         a, p, n = self.forward(True, qimg, pimg, nimg, ptag, ntag)
         loss = self.loss.forward(True, a, p, n)
-        if self.debug:
-            print tensor.to_numpy(loss)
         da, dp, dn = self.loss.backward()
         return self.backward(da, dp, dn), loss
 

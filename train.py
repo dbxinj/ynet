@@ -103,6 +103,7 @@ if __name__ == '__main__':
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nproc", type=int, default=2, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
+    parser.add_argument("--img_size", type=int, default=227, help='image size')
     args = parser.parse_args()
 
     data_dir = os.path.join(args.data_dir, args.dataset)
@@ -113,15 +114,15 @@ if __name__ == '__main__':
     val_shop = os.path.join(data_dir, 'validation_shop.txt')
 
     if args.dataset == 'darn':
-        train_data = DARNDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
-        val_data = DARNDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
+        train_data = DARNDataIter(args.image_dir, train_pair, train_shop, img_size=args.img_size, nproc=args.nproc)
+        val_data = DARNDataIter(args.image_dir, val_pair, val_shop, img_size=args.img_size, nproc=args.nproc)
     elif args.dataset == 'deepfashion':
-        train_data = FashionDataIter(args.image_dir, train_pair, train_shop, nproc=args.nproc)
-        val_data = FashionDataIter(args.image_dir, val_pair, val_shop, nproc=args.nproc)
+        train_data = FashionDataIter(args.image_dir, train_pair, train_shop, img_size=args.img_size, nproc=args.nproc)
+        val_data = FashionDataIter(args.image_dir, val_pair, val_shop, img_size=args.img_size, nproc=args.nproc)
     else:
         print('Unknown dataset name')
     dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.CANIN('canet', model.TripletLoss(args.margin), dev, batchsize=args.batchsize, debug=args.debug)
+    net = model.CANIN('canet', model.TripletLoss(args.margin), dev, img_size=args.img_size, batchsize=args.batchsize, debug=args.debug)
     net.init_params(args.param_path)
     # args = random_gen_args(args)
     args.param_dir = os.path.join(args.param_dir, args.dataset)
