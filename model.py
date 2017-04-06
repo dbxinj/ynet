@@ -8,6 +8,7 @@ import cPickle as pickle
 import numpy as np
 import scipy.spatial
 from tqdm import trange
+import time
 
 
 def compute_precision(target):
@@ -117,41 +118,54 @@ class CANet(object):
         pass
 
     def retrieval(self, data, result_path, topk=1000):
+        bar = trange(data.num_batches, desc='Query Image')
+        query_ids = []
+        query = None
+        data.start(data.load_street_images)
+        for i in bar:
+            img, item = data.next()
+            x = np.squeeze(self.extract_query_feature(img, None))
+            query_ids.extend(item)
+            if query is None:
+                query = np.empty((data.query_size, x.shape[1]), dtype=np.float32)
+            query[i*x.shape[0]:(i+1)*x.shape[0]]=x
+        print 'query shape', query.shape
+
         bar = trange(data.shop_batches, desc='Database Image')
-        data.start(data.load_shop_images)
         db_ids = []
         db = None
+        data.start(data.load_shop_images)
         for i in bar:
             img, item, tag = data.next()
-            x = self.extract_db_feature(img, tag)
+            x = np.squeeze(self.extract_db_feature(img, tag))
+            db_ids.extend(item)
             if db is None:
                 db = np.empty((data.db_size, x.shape[1]), dtype=np.float32)
             db[i*x.shape[0]:(i+1)*x.shape[0]]=x
-
-        bar = trange(data.num_batches, desc='Query Image' % epoch)
-        data.start(data.load_street_images)
-        query_ids = []
-        query = None
-        for i in bar:
-            img, item = data.next()
-            x = self.extract_query_feature(img, None)
-            if db is None:
-                db = np.empty((data.query_size, x.shape[1]), dtype=np.float32)
-            db[i*x.shape[0]:(i+1)*x.shape[0]]=x
+        print 'db shape', db.shape
 
         data.stop()
+        '''
+        db_ids = [0] * 1000
+        query_ids = [0] * 1000
+        db = np.random.rand(1000, 10)
+        query = np.random.rand(100, 10)
+        '''
 
         t = time.time()
         dist=scipy.spatial.distance.cdist(query, db,'euclidean')
-        print('distance computation time = %f' % time.time() - t)
+        print('distance computation time = %f' % (time.time() - t))
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
-        np.save('%s-dist' % result_path, dist[sorted_idx])
+        topdist = np.empty(sorted_idx.shape, dtype=np.float32)
+        for i in range(sorted_idx.shape[0]):
+            topdist[i] = dist[i, sorted_idx[i]]
+        np.save('%s-dist' % result_path, topdist)
 
         K=100
         target = np.empty((query.shape[0], K), dtype=np.bool)
-        for i in query.shape[0]:
-            for j in K:
-                target[i,j] = db_item[sorted_idx[i, j]] == query_ids[i]
+        for i in range(query.shape[0]):
+            for j in range(K):
+                target[i,j] = db_ids[sorted_idx[i, j]] == query_ids[i]
         np.save('%s-target' % result_path, target)
 
         points = range(9, K+1, 10)
@@ -343,7 +357,7 @@ class CANIN(CANet):
             print('%30s = %2.8f' % ('data', x.l1()))
 
         for lyr in layers:
-            x = lyr.forward(is_train, x)
+            x = lyr.forward(False, x)
             if self.debug:
                 if type(x) == tensor.Tensor:
                     print('%30s = %2.8f' % (lyr.name, x.l1()))

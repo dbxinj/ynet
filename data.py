@@ -63,7 +63,7 @@ class DataIter(object):
         except Exception as e:
             print(e)
         except:
-            self.terminate()
+            self.stop()
             sys.exit(1)
 
     def start(self, func):
@@ -75,7 +75,7 @@ class DataIter(object):
             time.sleep(0.4)
             self.proc[-1].start()
 
-    def terminate(self):
+    def stop(self):
         for proc in self.proc:
             time.sleep(0.1)
             proc.terminate()

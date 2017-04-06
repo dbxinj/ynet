@@ -5,6 +5,7 @@ from singa import device
 import os
 import numpy as np
 from argparse import ArgumentParser
+import datetime
 
 
 if __name__ == '__main__':
