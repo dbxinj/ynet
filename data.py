@@ -14,12 +14,11 @@ validate_tool = image_tool.ImageTool()
 
 
 class DataIter(object):
-    def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr,
-                 batchsize=32, capacity=50, delimiter=' ',
-                 image_size=224, nproc=2):
+    def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr, img_size,
+                 batchsize=32, capacity=50, delimiter=' ', nproc=2):
         self.batchsize = batchsize
         self.image_folder = image_dir
-        self.image_size = image_size
+        self.img_size = img_size
         self.capacity = capacity
         self.nproc = nproc
         self.proc = []  # for loading triplet
@@ -80,12 +79,12 @@ class DataIter(object):
         self.proc = []
 
     def read_image(self, path, is_train=True):
-        img = image_tool.load_img(path).resize((self.image_size, self.image_size))
+        img = image_tool.load_img(path).resize((self.img_size, self.img_size))
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary.transpose(2, 0, 1)
         '''
         img = cv2.imread(path)
-        img = cv2.resize(img, (self.image_size, self.image_size))
+        img = cv2.resize(img, (self.img_size, self.img_size))
         img = img.transpose((2, 0, 1))
         img.astype('float32')
         return img
@@ -108,9 +107,9 @@ class DataIter(object):
         b = batch_start
         while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
-                qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
-                pimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
-                nimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
+                qimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
+                pimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
+                nimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 ptags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
                 ntags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
                 for i, k in enumerate(self.idx[b * self.batchsize: (b + 1) * self.batchsize]):
@@ -142,7 +141,7 @@ class DataIter(object):
         b = batch_start
         while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
-                qimgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
+                qimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 items = []
                 for i, rec in enumerate(self.image_pair[b * self.batchsize: (b + 1) * self.batchsize]):
                     qimgs[i, :] = self.read_image(rec[0])
@@ -164,7 +163,7 @@ class DataIter(object):
         b = batch_start
         while b < batch_start + nbatch_per_proc:
             if not self.queue.full():
-                imgs = np.empty((self.batchsize, 3, self.image_size, self.image_size), dtype=np.float32)
+                imgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
                 tags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
                 items = []
                 for i, rec in enumerate(self.shop_image[b * self.batchsize: (b + 1) * self.batchsize]):
@@ -180,15 +179,15 @@ class DataIter(object):
 
 
 class DARNDataIter(DataIter):
-    def __init__(self, image_dir, pair_file, shop_file, batchsize=32, nproc=1):
+    def __init__(self, image_dir, pair_file, shop_file, img_size, batchsize=32, nproc=1):
         self.ntags_per_attr = [20, 56, 10, 25, 27, 16, 7, 12, 6]
-        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32, nproc=nproc)
+        super(DARNDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, img_size=img_size, batchsize=32, nproc=nproc)
 
 
 class FashionDataIter(DataIter):
-    def __init__(self, image_dir, pair_file, shop_file, batchsize=32, nproc=1):
+    def __init__(self, image_dir, pair_file, shop_file, img_size, batchsize=32, nproc=1):
         self.ntags_per_attr =  170
-        super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32, nproc=nproc)
+        super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, img_size=img_size, batchsize=32, nproc=nproc)
 
 
 def calc_mean_std(image_dir, data_dir):
