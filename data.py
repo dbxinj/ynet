@@ -27,16 +27,19 @@ class DataIter(object):
         self.image_pair = []
         self.shop_image = []
 
-        tag_offset = []
         self.tag_dim = 0
-        for ntags in ntags_per_attr:
-            tag_offset.append(self.tag_dim)
-            self.tag_dim += ntags
+        tag_offset = [0] * 100
+        if type(ntags_per_attr) == list:
+            for i, ntags in enumerate(ntags_per_attr):
+                tag_offset[i] = (self.tag_dim)
+                self.tag_dim += ntags
+        else:
+            self.tag_dim = ntags_per_attr
 
         with open(pair_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset) if int(idx) != -1]
+                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset[0:len([vals[3:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), os.path.join(image_dir, vals[1]), vals[2], tags)
                 self.image_pair.append(record)
             self.num_batches = len(self.image_pair) / batchsize
@@ -45,7 +48,7 @@ class DataIter(object):
         with open(shop_file, 'r') as fd:
             for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset) if int(idx) != -1]
+                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset[0:len([vals[2:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), vals[1], tags)
                 self.shop_image.append(record)
 
@@ -184,12 +187,9 @@ class DARNDataIter(DataIter):
 
 class FashionDataIter(DataIter):
     def __init__(self, image_dir, pair_file, shop_file, batchsize=32, nproc=1):
-        self.ntags_per_attr = [8, 14, 9, 77, 7, 8, 26, 21, 7, 15, 39, 12, 10, 9, 8, 11, 12, 7, 11]
+        self.ntags_per_attr =  170
         super(FashionDataIter, self).__init__(image_dir, pair_file, shop_file, self.ntags_per_attr, image_size=227, batchsize=32, nproc=nproc)
 
-    def tag2vec(self, tags):
-        vec = np.zeros((self.tag_dim,), dtype=np.float32)
-        return vec
 
 def calc_mean_std(image_dir, data_dir):
     data = FashionDataIter(image_dir, os.path.join(data_dir, 'sample_pair.txt'),
