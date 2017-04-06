@@ -12,8 +12,9 @@ import time
 
 
 def compute_precision(target):
-    ret = target.cumsum(axis=1)
-    prec = ret / np.arange(1.0, 1 + ret.shape[1])
+    points = range(9, 101, 10)
+    ret = target.cumsum(axis=1) > 0
+    prec = np.average(ret[:, points], axis=0)
     return prec
 
 
@@ -168,13 +169,9 @@ class CANet(object):
                 target[i,j] = db_ids[sorted_idx[i, j]] == query_ids[i]
         np.save('%s-target' % result_path, target)
 
-        points = range(9, K+1, 10)
         prec = compute_precision(target)
-        prec = np.average(prec[:, points], axis=0)
-        print 'Position  ',  points
         print 'Precision ',  prec
         np.savetxt('%s-precision.txt' % result_path, prec)
-
         return query, db, sorted_idx
 
     def rerank(self, query, db, candidate):
