@@ -103,7 +103,7 @@ if __name__ == '__main__':
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nproc", type=int, default=2, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
-    parser.add_argument("--img_size", type=int, default=227, help='image size')
+    parser.add_argument("--img_size", type=int, default=224, help='image size')
     args = parser.parse_args()
 
     data_dir = os.path.join(args.data_dir, args.dataset)

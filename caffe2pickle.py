@@ -8,12 +8,12 @@ if __name__ == '__main__':
     parser.add_argument("--proto", help='proto file')
     parser.add_argument("--model", help='bin file')
     parser.add_argument("--output", help='pickle file path')
-    parser.add_argument("--print", action="store_true")
+    parser.add_argument("--show", action="store_true")
     parser.add_argument("--names", type=list, help="list of layer names")
     args = parser.parse_args()
 
     net = caffe.Net(args.proto, args.model, caffe.TEST)
-    if args.print:
+    if args.show:
         print net.params.keys()
     else:
         params = {}

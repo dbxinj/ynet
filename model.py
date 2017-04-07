@@ -234,41 +234,41 @@ class CANIN(CANet):
 
     def add_conv(self, layers, name, nb_filter, size, stride, pad=0, sample_shape=None):
         if sample_shape != None:
-            layers.append(Conv2D('%s-3x3' % name, nb_filter, size, stride, pad=pad,
+            layers.append(Conv2D('%s-3x3' % name, nb_filter[0], size, stride, pad=pad,
                            input_sample_shape=sample_shape))
         else:
-            layers.append(Conv2D('%s-3x3' % name, nb_filter, size, stride, pad=pad,
+            layers.append(Conv2D('%s-3x3' % name, nb_filter[0], size, stride, pad=pad,
                            input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Activation('%s-3x3-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
-        layers.append(Conv2D('%s-1x1-1' % name, nb_filter, 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
+        layers.append(Conv2D('%s-1x1-1' % name, nb_filter[1], 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Activation('%s-1x1-1-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
-        layers.append(Conv2D('%s-1x1-2' % name, nb_filter, 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
+        layers.append(Conv2D('%s-1x1-2' % name, nb_filter[2], 1, 1, input_sample_shape=layers[-1].get_output_sample_shape()))
         layers.append(Activation('%s-1x1-2-relu' % name, input_sample_shape=layers[-1].get_output_sample_shape()))
 
 
     def create_net(self, name, img_size, batchsize=32):
         shared = []
 
-        self.add_conv(shared, 'conv1', 96, 5, 2, sample_shape=(3, img_size, img_size))
-        shared.append(MaxPooling2D('p1', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
+        self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
+        shared.append(MaxPooling2D('p1', 3, 2, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        self.add_conv(shared, 'conv2', 256, 5, 2, 2)
-        shared.append(MaxPooling2D('p2', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
+        self.add_conv(shared, 'conv2', [256, 256, 256], 5, 1, 2)
+        shared.append(MaxPooling2D('p2', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        self.add_conv(shared, 'conv3', 384, 3, 1, 1)
-        shared.append(MaxPooling2D('p3', 3, 2, input_sample_shape=shared[-1].get_output_sample_shape()))
+        self.add_conv(shared, 'conv3', [384, 384, 384], 3, 1, 1)
+        shared.append(MaxPooling2D('p3', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
         slice_layer = Slice('slice', 0, [batchsize], input_sample_shape=shared[-1].get_output_sample_shape())
         shared.append(slice_layer)
 
         street = []
-        self.add_conv(street, 'steet-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
-        street.append(AvgPooling2D('street-p4', 7, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
+        self.add_conv(street, 'steet-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        street.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(Flatten('street-flat', input_sample_shape=street[-1].get_output_sample_shape()))
         street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
 
         shop = []
-        self.add_conv(shop, 'shop-conv4', 128, 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
-        shop.append(AvgPooling2D('shop-p4', 7, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
