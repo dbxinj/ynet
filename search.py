@@ -17,16 +17,18 @@ if __name__ == '__main__':
     parser.add_argument("--batchsize", type=int, default=32)
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
     parser.add_argument("--img_size", type=int, default=227, help='image size')
+    parser.add_argument("--phase", default='test', choices=['validation', 'test'])
     args = parser.parse_args()
 
     data_dir = os.path.join('data', args.dataset)
     meanstd = np.load(os.path.join(data_dir, 'meta.npy'))
-    pair = os.path.join(data_dir, 'test_pair.txt')
-    shop = os.path.join(data_dir, 'test_shop.txt')
+    pair = os.path.join(data_dir, '%s_pair.txt' % args.phase)
 
     if args.dataset == 'darn':
+        shop = os.path.join(data_dir, '%s_shop.txt' % args.phase)
         data = DARNDataIter(args.image_dir, pair, shop, img_size=args.img_size, nproc=1)
     elif args.dataset == 'deepfashion':
+        shop = os.path.join(data_dir, 'shop.txt')
         data = FashionDataIter(args.image_dir, pair, shop, img_size=args.img_size, nproc=1)
     else:
         print('Unknown dataset name')

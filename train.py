@@ -109,16 +109,16 @@ if __name__ == '__main__':
     data_dir = os.path.join(args.data_dir, args.dataset)
     meanstd = np.load(os.path.join(data_dir, 'meta.npy'))
     train_pair = os.path.join(data_dir, 'train_pair.txt')
-    train_shop = os.path.join(data_dir, 'train_shop.txt')
     val_pair = os.path.join(data_dir, 'validation_pair.txt')
-    val_shop = os.path.join(data_dir, 'validation_shop.txt')
-
     if args.dataset == 'darn':
+        train_shop = os.path.join(data_dir, 'train_shop.txt')
+        val_shop = os.path.join(data_dir, 'validation_shop.txt')
         train_data = DARNDataIter(args.image_dir, train_pair, train_shop, img_size=args.img_size, nproc=args.nproc)
         val_data = DARNDataIter(args.image_dir, val_pair, val_shop, img_size=args.img_size, nproc=args.nproc)
     elif args.dataset == 'deepfashion':
-        train_data = FashionDataIter(args.image_dir, train_pair, train_shop, img_size=args.img_size, nproc=args.nproc)
-        val_data = FashionDataIter(args.image_dir, val_pair, val_shop, img_size=args.img_size, nproc=args.nproc)
+        shop = os.path.join(data_dir, 'shop.txt')
+        train_data = FashionDataIter(args.image_dir, train_pair, shop, img_size=args.img_size, nproc=args.nproc)
+        val_data = FashionDataIter(args.image_dir, val_pair, shop, img_size=args.img_size, nproc=args.nproc)
     else:
         print('Unknown dataset name')
     dev = device.create_cuda_gpu_on(args.gpu)
