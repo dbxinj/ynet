@@ -17,9 +17,14 @@ if __name__ == '__main__':
         print net.params.keys()
     else:
         params = {}
-        for out_layer, caffe_layer in zip(args.names, net.params.keys()):
+        names = ['conv1-3x3', 'conv1-1x1-1', 'conv1-1x1-2', 'conv2-3x3', 'conv2-1x1-1', 'conv2-1x1-2', 'conv3-3x3', 'conv3-1x1-1', 'conv3-1x1-2', 'street-conv4-3x3', 'street-conv4-1x1-1', 'street-conv4-1x1-2', 'shop-conv4-3x3', 'shop-conv4-1x1-1', 'shop-conv4-1x1-2']
+        keys = net.params.keys()
+        keys = keys + keys[-3:]
+        print names
+        print keys
+        for out_layer, caffe_layer in zip(names, keys):
             weights=np.copy(net.params[caffe_layer][0].data)
-            bias=np.copy(net.params[lcaffe_layer][1].data)
+            bias=np.copy(net.params[caffe_layer][1].data)
             params[out_layer+'_weight']=weights
             params[out_layer+'_bias']=bias
             print out_layer, weights.shape, bias.shape
