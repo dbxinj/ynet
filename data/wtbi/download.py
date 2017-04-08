@@ -25,4 +25,5 @@ if __name__ == '__main__':
             try:
                 urllib.urlretrieve(url, out)
             except Exception as e:
+                print e
                 print('bad url %s' % url)
