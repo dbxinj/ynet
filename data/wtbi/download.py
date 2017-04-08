@@ -20,8 +20,8 @@ if __name__ == '__main__':
 
     for i in trange(e-s):
         try:
-            id = lines[i+s][0:10]
-            url = lines[i+s][11:-2]
+            id = lines[i+s][0:9]
+            url = lines[i+s][10:-1]
             out = os.path.join(args.out_dir, '%d.jpg' % int(id))
             if not os.path.exists(out):
                 urllib.urlretrieve(url, out)
