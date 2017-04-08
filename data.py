@@ -239,7 +239,7 @@ def sample(data_dir, ratio=0.2):
 
 def benchmark1(image_dir):
     # print 'cv2 optimized ', cv2.useOptimized()
-    data = DARNDataIter(image_dir, './data/deepfashion/train_pair.txt', './data/deepfashion/train_shop.txt', batchsize=50)
+    data = DARNDataIter(image_dir, './data/darn/train_pair.txt', './data/darn/train_shop.txt', img_size=224, batchsize=50)
     t = time.time()
     for i in trange(50):
         fpath, _, _ = data.shop_image[i]
@@ -260,13 +260,13 @@ def benchmark2(image_dir):
 
 
 if __name__ == '__main__':
-    image_dir = '../img/' #'/data/jixin/darn_dataset'
+    image_dir = '/data/jixin/darn_dataset'
+    benchmark1(image_dir)
+    '''
     sample('./data/deepfashion/')
     meta = calc_mean_std(image_dir, './data/deepfashion')
     np.save('./data/deepfashion/meta', meta)
 
-    '''
-    benchmark1(image_dir)
     benchmark2()
         val_dat = DARNDataIter(image_dir, './data/darn/validation_pair.txt', './data/darn/validation_shop.txt')
     val_dat.start(val_dat.load_street_images)
