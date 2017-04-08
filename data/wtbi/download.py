@@ -11,7 +11,7 @@ if __name__ == '__main__':
     parser.add_argument("--photo", default='photos.txt')
     args = parser.parse_args()
 
-    with  open(args.photo,'r') as fd:
+    with open(args.photo, 'r') as fd:
         lines = fd.readlines()
 
     nlines = len(lines) // args.n
@@ -19,11 +19,12 @@ if __name__ == '__main__':
     e = s + nlines + len(lines) % args.n
 
     for i in trange(e-s):
-        id, url = lines[i+s].strip('\n').split(',')
-        out = os.path.join(args.out_dir, '%d.jpg' % int(id))
-        if not os.path.exists(out):
-            try:
+        try:
+            id = lines[i+s][0:10]
+            url = lines[i+s][11:-2]
+            out = os.path.join(args.out_dir, '%d.jpg' % int(id))
+            if not os.path.exists(out):
                 urllib.urlretrieve(url, out)
-            except Exception as e:
-                print e
-                print('bad url %s' % url)
+        except Exception as e:
+            print e
+            print('bad url %s' % url)
