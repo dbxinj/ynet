@@ -24,5 +24,5 @@ if __name__ == '__main__':
         if not os.path.exists(out):
             try:
                 urllib.urlretrieve(url, out)
-            except:
+            except Exception as e:
                 print('bad url %s' % url)
