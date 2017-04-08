@@ -5,7 +5,6 @@ import os
 import sys
 from multiprocessing import Process, Queue
 from tqdm import trange
-# import cv2
 
 from singa import image_tool
 
@@ -90,8 +89,8 @@ class DataIter(object):
         img = cv2.resize(img, (self.img_size, self.img_size))
         img = img.transpose((2, 0, 1))
         img.astype('float32')
-        return img
         '''
+        return img
 
     def tag2vec(self, tags):
         vec = np.zeros((self.tag_dim,), dtype=np.float32)

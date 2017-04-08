@@ -200,6 +200,13 @@ class CANet(object):
                         print 'Param: %s missing in the checkpoint file' % name
                         continue
                     try:
+                        if name == 'conv1-3x3_weight':
+                            print name, params[name].shape
+                            oc, ic, h, w = params[name].shape
+                            assert ic == 3, 'input channel should be 3'
+                            w = np.reshape(params[name], (oc, ic, -1))
+                            w[:, [0,1,2], :] = w[:, [2,1,0], :]
+                            params[name] = np.reshape(w, (oc,-1))
                         val.copy_from_numpy(params[name])
                     except AssertionError as err:
                         print 'Error from copying values for param: %s' % name
