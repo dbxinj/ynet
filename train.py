@@ -69,7 +69,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
         print('Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
               (epoch, loss / val_data.num_batches, dap / val_data.num_batches,
                dan / val_data.num_batches))
-        net.retrieval(val_data, os.path.join(cfg.param_dir, 'result-%d-' % epoch) ,100)
+        # net.retrieval(val_data, os.path.join(cfg.param_dir, 'result-%d-' % epoch) ,100)
 
         if loss < best_loss - cfg.margin/10:
             best_loss = loss

@@ -128,7 +128,7 @@ class CANet(object):
             x = np.squeeze(self.extract_query_feature(img, None))
             query_ids.extend(item)
             if query is None:
-                query = np.empty((data.query_size, x.shape[1]), dtype=np.float32)
+                query = np.empty((data.query_size, x.shape[1]), dtype=np.float32)  #data.query_size,
             query[i*x.shape[0]:(i+1)*x.shape[0]]=x
         print 'query shape', query.shape
 
@@ -141,7 +141,7 @@ class CANet(object):
             x = np.squeeze(self.extract_db_feature(img, tag))
             db_ids.extend(item)
             if db is None:
-                db = np.empty((data.db_size, x.shape[1]), dtype=np.float32)
+                db = np.empty((data.db_size,  x.shape[1]), dtype=np.float32) #data.db_size,
             db[i*x.shape[0]:(i+1)*x.shape[0]]=x
         print 'db shape', db.shape
 
@@ -200,7 +200,7 @@ class CANet(object):
                         print 'Param: %s missing in the checkpoint file' % name
                         continue
                     try:
-                        if name == 'conv1-3x3_weight':
+                        if name == 'conv1-3x3_weight' and len(params[name].shape) == 4:
                             print name, params[name].shape
                             oc, ic, h, w = params[name].shape
                             assert ic == 3, 'input channel should be 3'
