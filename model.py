@@ -118,13 +118,15 @@ class CANet(object):
         '''x for shop images'''
         pass
 
-    def retrieval(self, data, result_path, topk=1000):
+    def retrieval(self, data, result_path, meanstd, topk=1000):
         bar = trange(data.num_batches, desc='Query Image')
         query_ids = []
         query = None
         data.start(data.load_street_images)
         for i in bar:
             img, item = data.next()
+            img -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
+            img /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
             x = np.squeeze(self.extract_query_feature(img, None))
             query_ids.extend(item)
             if query is None:
@@ -138,6 +140,8 @@ class CANet(object):
         data.start(data.load_shop_images)
         for i in bar:
             img, item, tag = data.next()
+            img -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
+            img /= meanstd[3][np.newaxis, :, np.newaxis, np.newaxis]
             x = np.squeeze(self.extract_db_feature(img, tag))
             db_ids.extend(item)
             if db is None:
@@ -369,7 +373,7 @@ class CANIN(CANet):
 
 
     def extract_query_feature(self, x, y):
-        return self.forward_layers(x, self.shared[0:-2] + self.street)
+        return self.forward_layers(x, self.shared[0:-1] + self.street)
 
     def extract_db_feature(self, x, tag):
-        return self.forward_layers(x, self.shared[0:-2] + self.street[0:-2])
+        return self.forward_layers(x, self.shared[0:-1] + self.street[0:-1])
