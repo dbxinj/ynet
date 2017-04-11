@@ -22,7 +22,8 @@ def train(cfg, net, meanstd, train_data, val_data=None):
     os.makedirs(log_dir)
     logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
 
-    sgd = optimizer.SGD(momentum=cfg.mom, weight_decay=cfg.weight_decay)
+    # sgd = optimizer.SGD(momentum=cfg.mom, weight_decay=cfg.weight_decay)
+    sgd = optimizer.Adam(weight_decay=cfg.weight_decay)
 
     best_loss = 1000
     for epoch in range(cfg.max_epoch):
@@ -47,7 +48,7 @@ def train(cfg, net, meanstd, train_data, val_data=None):
                 if cfg.debug:
                     print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
 #                print pname, pgrad.shape, pval.shape
-                sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
+                sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname), b)
             loss = update_perf(loss, l[0])
             dap = update_perf(dap, l[1])
             dan = update_perf(dan, l[2])
