@@ -12,53 +12,53 @@ train_tool = image_tool.ImageTool()
 validate_tool = image_tool.ImageTool()
 
 
+def read_product_info(fpath, delimiter=',', seed=0):
+    '''return the product name to index mapping and product records'''
+    products = []
+    with open(fpath, 'r') as fd:
+        for line in fd.readlines():
+            rec = line.strip('\n').split(delimiter)
+            products.append(rec)
+    random.seed(seed)
+    random.shuffle(products)
+    return products
+
+
 class DataIter(object):
-    def __init__(self, image_dir, pair_file, shop_file, ntags_per_attr, img_size,
+    def __init__(self, image_dir, image_file, products, img_size,
                  batchsize=32, capacity=50, delimiter=' ', nproc=2):
-        self.batchsize = batchsize
-        self.image_folder = image_dir
+        self.batchsize = batchsize  # num of products to process
+        self.image_dir = image_dir
         self.img_size = img_size
         self.capacity = capacity
         self.nproc = nproc
         self.proc = []  # for loading triplet
         self.queue = Queue(capacity)
-        self.image_pair = []
-        self.shop_image = []
+        self.product2id = {}
+        self.street_images = [[]] * len(products)
+        self.shop_images = [[]] * len(products)
+        for idx, rec in enumerate(products):
+            product2id[rec[0]] = idx
 
-        self.tag_dim = 0
-        tag_offset = [0] * 100
-        if type(ntags_per_attr) == list:
-            for i, ntags in enumerate(ntags_per_attr):
-                tag_offset[i] = (self.tag_dim)
-                self.tag_dim += ntags
-        else:
-            self.tag_dim = ntags_per_attr
-
-        with open(pair_file, 'r') as fd:
+        with open(image_file, 'r') as fd:
             for line in fd.readlines():
-                vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset[0:len(vals[3:])]) if int(idx) != -1]
-                record = (os.path.join(image_dir, vals[0]), os.path.join(image_dir, vals[1]), vals[2], tags)
-                self.image_pair.append(record)
-            self.num_batches = len(self.image_pair) / batchsize
-            self.query_size = self.num_batches * batchsize
-            self.idx = range(len(self.image_pair))
+                rec = line.strip('\n').split(delimiter)
+                if rec[1] in self.product2id:
+                    pid = self.product2id[rec[1]]
+                    if rec[2] == '0':  # street
+                        self.street_image[pid].append(rec[0])
+                    else:
+                        self.shop_image[pid].append(rec[0])
 
-        with open(shop_file, 'r') as fd:
-            for line in fd.readlines():
-                vals = line.strip('\n').split(delimiter)
-                tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset[0:len(vals[2:])]) if int(idx) != -1]
-                record = (os.path.join(image_dir, vals[0]), vals[1], tags)
-                self.shop_image.append(record)
-            self.shop_batches = len(self.shop_image) / batchsize
-            self.db_size = self.shop_batches * batchsize
+        self.idx = range(len(self.products))
 
     def next(self):
         assert self.proc is not None, 'call start before next'
         try:
             while self.queue.empty():
                 time.sleep(0.1)
-            return self.queue.get()  # dequeue one mini-batch
+            imgs, pids = self.queue.get()  # dequeue one mini-batch
+            return imgs, self.products[pids]
         except Exception as e:
             print(e)
         except:
@@ -84,13 +84,6 @@ class DataIter(object):
         img = image_tool.load_img(path).resize((self.img_size, self.img_size))
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary.transpose(2, 0, 1)
-        '''
-        img = cv2.imread(path)
-        img = cv2.resize(img, (self.img_size, self.img_size))
-        img = img.transpose((2, 0, 1))
-        img.astype('float32')
-        '''
-        return img
 
     def tag2vec(self, tags):
         vec = np.zeros((self.tag_dim,), dtype=np.float32)
@@ -100,85 +93,53 @@ class DataIter(object):
     def do_shuffle(self):
         random.shuffle(self.idx)
 
-    def load_triples(self, proc_id, nproc):
-        nbatch = len(self.image_pair) // self.batchsize
-        nbatch_per_proc = nbatch // nproc
-        batch_start = nbatch_per_proc * proc_id
-        if proc_id == nproc - 1:
-            nbatch_per_proc += nbatch % nproc
-        b = batch_start
-        while b < batch_start + nbatch_per_proc:
-            if not self.queue.full():
-                qimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
-                pimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
-                nimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
-                ptags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
-                ntags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
-                for i, k in enumerate(self.idx[b * self.batchsize: (b + 1) * self.batchsize]):
-                    record = self.image_pair[k]
-                    qimgs[i, :] = self.read_image(record[0])
-                    pimgs[i, :] = self.read_image(record[1])
-                    item = record[2]
-                    ptags[i] = self.tag2vec(record[3])
-                    nitem = item
-                    while nitem == item:  # until find a negative sample
-                        nidx = random.randint(0, len(self.shop_image)-1)
-                        nitem = self.shop_image[nidx][1]
-                    nimgs[i] = self.read_image(self.shop_image[nidx][0])
-                    ntags[i] = self.tag2vec(self.shop_image[nidx][2])
-                # enqueue one mini-batch
-                self.queue.put((qimgs, pimgs, nimgs, ptags, ntags))
-                b += 1
-            else:
-                time.sleep(0.1)
-        print('finish load triples')
+    def do_load(self, n_street=1, n_shop=1):
+        count = 0
+        if n_streep * n_shop == 0:
+            img_list = []
+            pid_list = []
+            offset = 0
+        else:
+            street_img_list = []
+            shop_img_list = []
+            street_pid_list = []
+            shop_pid_list = []
+        idx = 0
+        while not stop:
+            if len(self.street_image[idx]) > n_street and len(self.shop_image[idx]) > n_shop:
+                if n_street == -1 and n_shop == 0:  # scan street images
+                    offset, idx = self.load(self.street_image[idx], img_list, pid_list, idx, offset)
+                elif n_street == 0 and n_shop == -1:  # scan shop images
+                    offset, idx = self.load(self.shop_image[idx], img_list, pid_list, idx, offset)
+                else:
+                    samples = random.shuffle(range(len(self.street_image[idx])))[0:n_street]
+                    street_img_list.extends(self.street_image[idx][samples])
+                    street_pid_list.extends([idx] * n_street)
+                    samples = random.shuffle(range(len(self.shop_image[idx])))[0:n_shop]
+                    shop_img_list.extends(self.shop_image[idx][samples])
+                    shop_pid_list.extends([idx] * n_shop)
+                    idx += 1
+            if len(img_list) == self.batchsize:
+                self.queue.put((self.read_images(img_list),pid_list))
+            if len(street_pid_list) == self.batchsize * n_street:
+                self.queue.put((self.read_images(street_img_list + shop_img_list), street_pid_list + shop_pid_list))
+            if idx == len(self.products):
+                break
+       print('finish load triples')
 
-    def load_street_images(self, proc_id, nproc):
-        nbatch = len(self.image_pair) // self.batchsize
-        nbatch_per_proc = nbatch // nproc
-        batch_start = nbatch_per_proc * proc_id
-        if proc_id == nproc - 1:
-            nbatch_per_proc += nbatch % nproc
-        # self.queue = Queue(self.capacity)
-        b = batch_start
-        while b < batch_start + nbatch_per_proc:
-            if not self.queue.full():
-                qimgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
-                items = []
-                for i, rec in enumerate(self.image_pair[b * self.batchsize: (b + 1) * self.batchsize]):
-                    qimgs[i, :] = self.read_image(rec[0])
-                    items.append(rec[2])
-                # enqueue one mini-batch
-                self.queue.put((qimgs, items))
-                b += 1
-            else:
-                time.sleep(0.1)
-        print('finish load street')
+    def load(self, from_list, to_list, pid_list, idx, offset):
+        n = math.min(self.batchsize - len(to_list), len(from_list) - offset)
+        to_list.extends(from_list[offset:offset+n])
+        pid_list.extends([idx] * n)
+        if offset + n < len(from_list):
+            ofset += n
+        else:
+            offset = 0
+            idx += 1
+        return idx, offset
 
-    def load_shop_images(self, proc_id, nproc):
-        nbatch = len(self.shop_image) // self.batchsize
-        nbatch_per_proc = nbatch // nproc
-        batch_start = nbatch_per_proc * proc_id
-        if proc_id == nproc - 1:
-            nbatch_per_proc += nbatch % nproc
-        # self.queue = Queue(self.capacity)
-        b = batch_start
-        while b < batch_start + nbatch_per_proc:
-            if not self.queue.full():
-                imgs = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
-                tags = np.empty((self.batchsize, self.tag_dim), dtype=np.float32)
-                items = []
-                for i, rec in enumerate(self.shop_image[b * self.batchsize: (b + 1) * self.batchsize]):
-                    imgs[i, :] = self.read_image(rec[0])
-                    items.append(rec[1])
-                    tags[i] = self.tag2vec(rec[2])
-                # enqueue one mini-batch
-                self.queue.put((imgs, items, tags))
-                b += 1
-            else:
-                time.sleep(0.1)
-        print('finish load shop images')
-
+    def read_images(self, img_list):
+        pass
 
 class DARNDataIter(DataIter):
     def __init__(self, image_dir, pair_file, shop_file, img_size, batchsize=32, nproc=1):
