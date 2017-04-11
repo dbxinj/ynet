@@ -77,16 +77,16 @@ def train(cfg, net, meanstd, train_data, val_data=None):
                dan / val_data.num_batches))
         net.retrieval(val_data, os.path.join(cfg.param_dir, 'result-%d-' % epoch), meanstd, 100)
 
-        if loss < best_loss - cfg.margin/10:
+        if loss < best_loss - best_loss/10:
+            if loss < best_loss - best_loss/5:
+                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
             best_loss = loss
             nb_epoch_after_best = 0
-            if best_loss < cfg.margin/2:
-                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
         else:
             nb_epoch_after_best += 1
-            if nb_epoch_after_best > 4:
+            if nb_epoch_after_best > 10:
                 break
-            elif nb_epoch_after_best % 2 == 0:
+            elif nb_epoch_after_best % 5 == 0:
                 cfg.lr /= 10
                 print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
                 logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
