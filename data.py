@@ -35,7 +35,7 @@ class DataIter(object):
             self.tag_dim = ntags_per_attr
 
         with open(pair_file, 'r') as fd:
-            for line in fd.readlines()[0:150]:
+            for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
                 tags = [int(idx) + off for (idx, off) in zip(vals[3:], tag_offset[0:len(vals[3:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), os.path.join(image_dir, vals[1]), vals[2], tags)
@@ -45,7 +45,7 @@ class DataIter(object):
             self.idx = range(len(self.image_pair))
 
         with open(shop_file, 'r') as fd:
-            for line in fd.readlines()[0:150]:
+            for line in fd.readlines():
                 vals = line.strip('\n').split(delimiter)
                 tags = [int(idx) + off for (idx, off) in zip(vals[2:], tag_offset[0:len(vals[2:])]) if int(idx) != -1]
                 record = (os.path.join(image_dir, vals[0]), vals[1], tags)
