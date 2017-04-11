@@ -376,4 +376,4 @@ class CANIN(CANet):
         return self.forward_layers(x, self.shared[0:-1] + self.street)
 
     def extract_db_feature(self, x, tag):
-        return self.forward_layers(x, self.shared[0:-1] + self.street[0:-1])
+        return self.forward_layers(x, self.shared[0:-1] + self.shop[0:-1])
