@@ -12,7 +12,7 @@ import scipy.spatial
 from tqdm import trange
 import time
 
-logger = logger.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def update_perf(his, cur, a=0.8):

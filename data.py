@@ -12,7 +12,7 @@ from tqdm import trange
 
 from singa import image_tool
 
-logger = logger.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 FLOAT_WIDTH = 4
 
