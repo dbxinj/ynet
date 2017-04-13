@@ -12,6 +12,8 @@ from tqdm import trange
 
 from singa import image_tool
 
+logger = logger.getLogger(__name__)
+
 FLOAT_WIDTH = 4
 
 def read_products(fpath, delimiter=' ', seed=-1):
@@ -32,7 +34,7 @@ def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '
     pname2id = {}  # product name to id (index)
     for id, rec in enumerate(products):
         pname2id[rec[0]] = id
-    logging.info('Doing filtering with nuser=%d, nshop=%d' % (nuser, nshop))
+    logger.info('Doing filtering with nuser=%d, nshop=%d' % (nuser, nshop))
 
     with open(img_file, 'r') as fd:
         for line in fd.readlines():
@@ -47,7 +49,7 @@ def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '
     idx1 = user > nuser
     idx2 = shop > nshop
     idx = np.squeeze(np.argwhere(idx1 * idx2 > 0))
-    logging.info('Num of products before and after filtering: %d vs %d' % (len(products), len(idx)))
+    logger.info('Num of products before and after filtering: %d vs %d' % (len(products), len(idx)))
     return [products[i] for i in idx]
 
 
@@ -94,7 +96,7 @@ class DataIter(object):
         for id, rec in enumerate(products):
             self.pname2id[rec[0]] = id
 
-        logging.info('Total num of products = %d' % len(products))
+        logger.info('Total num of products = %d' % len(products))
         self.img_dir = img_dir
         self.img_size = img_size
         self.img_path = []
@@ -112,10 +114,10 @@ class DataIter(object):
                         else:
                             self.pid2shopids[pid].append(len(self.img_path) - 1)
         self.min_user_per_prod, self.num_user, avg_num = stat_list(self.pid2userids)
-        logging.info('min street imgs per product = %d, avg = %d, total imgs = %d'
+        logger.info('min street imgs per product = %d, avg = %d, total imgs = %d'
                 % (self.min_user_per_prod, avg_num, self.num_user))
         self.min_shop_per_prod, self.num_shop, avg_num = stat_list(self.pid2shopids)
-        logging.info('min shop imgs per product = %d, avg = %d, total imgs = %d'
+        logger.info('min shop imgs per product = %d, avg = %d, total imgs = %d'
                 % (self.min_shop_per_prod, avg_num, self.num_shop))
 
         self.userid_pid = None
@@ -247,15 +249,15 @@ class DataIter(object):
                 self.result.put((offset, count, user_pid + shop_pid))
             else:
                 self.result.put((ary, user_pid + shop_pid))
-        logging.info('finish load triples by proc = %d' % proc)
+        logger.info('finish load triples by proc = %d' % proc)
 
     def load_user(self, proc):
         self.load_single(proc, self.userid_pid, self.user_meanstd)
-        logging.info('Finish loading user images')
+        logger.info('Finish loading user images')
 
     def load_shop(self, proc):
         self.load_single(proc, self.shopid_pid, self.shop_meanstd)
-        logging.info('Finish loading shop images')
+        logger.info('Finish loading shop images')
 
     def load_single(self, proc, imgid_pid, meanstd):
         bstart, bend = self.get_batch_range(len(imgid_pid) // self.batchsize, proc)
@@ -335,7 +337,7 @@ def benchmark(img_dir, data_dir):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
+    logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
     img_dir = '../darn'
     data_dir = 'data/darn/'
     benchmark(img_dir, data_dir)

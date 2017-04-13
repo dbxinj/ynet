@@ -12,6 +12,8 @@ import scipy.spatial
 from tqdm import trange
 import time
 
+logger = logger.getLogger(__name__)
+
 
 def update_perf(his, cur, a=0.8):
     '''Accumulate the performance by considering history and current values.'''
@@ -230,7 +232,7 @@ class YNet(object):
             dan = update_perf(dan, l[2])
             bar.set_postfix(train_loss=loss, dap=dap, dan=dan, load_time=t[0], bptime=t[1])
         data.stop()
-        logging.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
+        logger.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
 
     def extract_query_feature(self, data):
         '''x for user images, y for shop image features'''
@@ -277,7 +279,7 @@ class YNet(object):
         msg = 'Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
               (epoch, loss / data.num_batches, dap / data.num_batches, dan / data.num_batches)
         print(msg)
-        logging.info(msg)
+        logger.info(msg)
         return loss / data.num_batches
 
     def retrieval(self, data, result_path, topk=100):

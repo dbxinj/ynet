@@ -13,7 +13,7 @@ from singa import optimizer
 from singa import device
 
 
-def train(cfg, net, train_data, val_data=None):
+def train(cfg, net, train_data, val_data, test_data=None):
     if cfg.opt == 'adam':
         opt = optimizer.Adam(weight_decay=cfg.weight_decay)
     elif cfg.opt == 'nesterov':
@@ -27,8 +27,8 @@ def train(cfg, net, train_data, val_data=None):
     for epoch in range(cfg.max_epoch):
         net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
         loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
-        if epoch % cfg.search_freq == 0:
-            perf, _ = net.retrieval(val_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
+        if epoch % cfg.search_freq == 0 and test_data is not None:
+            perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
             precision.append(perf)
             logging.info('Retrieval performance of epoch %d = %s' % (epoch, perf))
             print perf
@@ -107,7 +107,7 @@ if __name__ == '__main__':
     parser.add_argument("--topk", type=int, default=100, help='top results')
     args = parser.parse_args()
 
-    train_data, val_data, _ = create_datasets(args, True, True, False)
+    train_data, val_data, test_data = create_datasets(args, True, True, True)
     dev = device.create_cuda_gpu_on(args.gpu)
     net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
             batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
@@ -123,4 +123,4 @@ if __name__ == '__main__':
         logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
     logging.info(args)
 
-    train(args, net, train_data, val_data)
+    train(args, net, train_data, val_data, test_data)
