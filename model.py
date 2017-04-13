@@ -446,5 +446,5 @@ class YNIN(YNet):
 
     def extract_db_feature_on_batch(self, data):
         img, pid = data.next()
-        fea = self.forward_layers(img, self.shared[0:-1] + self.shop[0:-1])
+        fea = self.forward_layers(img, self.shared[0:-1] + self.shop)
         return fea, pid
