@@ -58,7 +58,7 @@ class L2Norm(layer.Layer):
 
 
 def l1(ary):
-    return np.average(np.abs(ary))
+    return np.average(ary)
 
 
 def loss_bp(is_train, a1, a2, p, n, margin):
@@ -76,7 +76,7 @@ def loss_bp(is_train, a1, a2, p, n, margin):
         gp = d_ap * sign[:, np.newaxis] * (-2 / batchsize)
         gn = d_an * sign[:, np.newaxis] * (2 / batchsize)
         grads = [-gp, -gn, gp, gn]
-    return ([l1(loss), l1(d1), l1(d2)], grads)
+    return (np.array([l1(loss), l1(d1), l1(d2)]), grads)
 
 
 class TripletLoss(loss.Loss):
@@ -96,7 +96,7 @@ class TripletLoss(loss.Loss):
             self.dev = user_fea.device
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
             self.gshop = np.zeros(sfea.shape, dtype=np.float32)
-        ret = [0, 0, 0]
+        ret = np.zeros((3,), dtype=float)
         for i in range(1, self.nshift+1):
             offset = i * self.nshop
             idx = range(offset, sfea.shape[0]) + range(0, offset)
@@ -105,9 +105,8 @@ class TripletLoss(loss.Loss):
                 self.guser += grads[0] + grads[1]
                 self.gshop += grads[2]
                 self.gshop[idx] += grads[3]
-            for r, l in zip(ret, loss):
-                r += l
-        return [r/self.nshift for r in ret]
+            ret += loss
+        return ret/self.nshift
 
     def backward(self):
         tguser = tensor.from_numpy(self.guser/self.nshift)

@@ -68,8 +68,8 @@ def create_datasets(args, with_train, with_val, with_test=False):
     num_train_products = int(num_products * args.train_split)
     num_val_products = (num_products - num_train_products) // 2
     if args.debug:
-        num_train_products = 1000
-        num_val_products = 1000
+        num_train_products = 2000
+        num_val_products = 500
     train_data, val_data, test_data = None, None, None
     if with_train:
         train_products = data.filter_products(args.img_dir, img_list_file,

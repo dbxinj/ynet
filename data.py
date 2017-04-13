@@ -12,6 +12,7 @@ from tqdm import trange
 
 from singa import image_tool
 
+FLOAT_WIDTH = 4
 
 def read_products(fpath, delimiter=' ', seed=-1):
     '''read the product.txt file to get a list of products: product ID, attributes'''
@@ -80,12 +81,13 @@ class DataIter(object):
         self.capacity = capacity
         self.proc = []
         self.nproc = nproc
-        # self.task = Queue(capacity) # tasks for the worker <offset, size>
+        self.task = Queue(capacity) # tasks for the worker <offset, size>
         self.result = Queue(capacity) # results from the worker <offset, size, product ids>
+        self.use_shared_mem = False
 
         # self.is_stop = Value(c_bool, False)
-        # self.img_buf = None  # shared mem
-        # self.img_buf_size = 0
+        self.img_buf = None  # shared mem
+        self.img_buf_size = 0
 
         self.idx2pid = range(len(products))  # for shuffle
         self.pname2id = {}  # product name to id (index)
@@ -141,16 +143,15 @@ class DataIter(object):
             nuser and nshop >= 0
         '''
         assert nuser >=0 and nshop >= 0, 'must >= 0'
-        # self.clear_queue(self.task)
         self.clear_queue(self.result)
-        '''
-        size = self.batchsize * 3 * self.img_size * self.img_size * (nuser + nshop)
-        if self.img_buf_size < self.capacity * size:
-            self.img_buf_size = self.capacity * size
-            self.img_buf = RawArray(c_float, self.img_buf_size)
-        for i in range(self.capacity):
-            self.task.put((i * size, size))
-        '''
+        if self.use_shared_mem:
+            self.clear_queue(self.task)
+            size = self.batchsize * 3 * self.img_size * self.img_size * (nuser + nshop)
+            if self.img_buf_size < self.capacity * size:
+                self.img_buf_size = self.capacity * size
+                self.img_buf = RawArray(c_float, self.img_buf_size)
+            for i in range(self.capacity):
+                self.task.put((i * size * FLOAT_WIDTH, size))
         if shuffle:
             random.shuffle(self.idx2pid)
         if nuser * nshop > 0:
@@ -158,7 +159,6 @@ class DataIter(object):
             for i in range(self.nproc):
                 self.proc.append(Process(target=self.load_pair, args=(i, nuser, nshop)))
                 self.proc[-1].start()
-            # self.pool.map_async(functools.partial(load_pair, self, nuser, nshop), range(self.nproc))
 
         elif nuser == 0:
             if self.shopid_pid is None:
@@ -174,13 +174,15 @@ class DataIter(object):
             for i in range(self.nproc):
                 self.proc.append(Process(target=self.load_user, args=(i,)))
                 self.proc[-1].start()
-            # self.pool.map_async(functiontools.partial(load_user, self), range(self.nproc))
 
     def next(self):
         try:
-            imgs, pids = self.result.get()  # dequeue one mini-batch
-            # imgs = np.copy(np.frombuffer(self.img_buf, count=count, offset=offset)).reshape((-1, 3, self.img_size, self.img_size))
-            # self.task.put((offset, count))
+            if self.use_shared_mem:
+                offset, count, pids = self.result.get()  # dequeue one mini-batch
+                imgs = np.copy(np.frombuffer(self.img_buf, count=count, offset=offset)).reshape((-1, 3, self.img_size, self.img_size))
+                self.task.put((offset, count))
+            else:
+                imgs, pids = self.result.get()
             return imgs, pids
         except Exception as e:
             print(e)
@@ -221,17 +223,19 @@ class DataIter(object):
         for b in range(bstart, bend):
             user_img, shop_img = [], []
             user_pid, shop_pid = [], []
-            # offset, count = self.task.get()
-            # ary = np.frombuffer(self.img_buf, count=count, offset=offset).reshape((-1, 3, self.img_size, self.img_size))
-            # batch_vol = self.batchsize * (nuser + nshop) * 3 * self.img_size * self.img_size
-            # assert batch_vol == count, 'buf size mis-match batch vol = %d, buf count = %d' % (batch_vol, count)
+            if self.use_shared_mem:
+                offset, count = self.task.get()
+                ary = np.frombuffer(self.img_buf, count=count, offset=offset).reshape((-1, 3, self.img_size, self.img_size))
+                batch_vol = self.batchsize * (nuser + nshop) * 3 * self.img_size * self.img_size
+                assert batch_vol == count, 'buf size mis-match batch vol = %d, buf count = %d' % (batch_vol, count)
+            else:
+                ary = np.empty((self.batchsize * (nuser + nshop), 3, self.img_size, self.img_size), dtype=np.float32)
             for idx in range(b * self.batchsize, (b + 1) * self.batchsize):
                 pid = self.idx2pid[idx]
                 user_img.extend(random.sample(self.pid2userids[pid], nuser))
                 user_pid.extend([pid] * nuser)
                 shop_img.extend(random.sample(self.pid2shopids[pid], nshop))
                 shop_pid.extend([pid] * nshop)
-            ary = np.empty((self.batchsize * (nuser + nshop), 3, self.img_size, self.img_size), dtype=np.float32)
             self.read_images(user_img + shop_img, ary)
             # normalize
             if self.user_meanstd is not None:
@@ -239,7 +243,10 @@ class DataIter(object):
                 ary[0:self.batchsize*nuser] /= self.user_meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
                 ary[self.batchsize*nuser:] -= self.shop_meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
                 ary[self.batchsize*nuser:] /= self.shop_meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
-            self.result.put((ary, user_pid + shop_pid))
+            if self.use_shared_mem:
+                self.result.put((offset, count, user_pid + shop_pid))
+            else:
+                self.result.put((ary, user_pid + shop_pid))
         logging.info('finish load triples by proc = %d' % proc)
 
     def load_user(self, proc):
@@ -253,11 +260,13 @@ class DataIter(object):
     def load_single(self, proc, imgid_pid, meanstd):
         bstart, bend = self.get_batch_range(len(imgid_pid) // self.batchsize, proc)
         for b in range(bstart, bend):
-            # offset, count = self.task.get()
-            # batch_vol = self.batchsize * 3 * self.img_size * self.img_size
-            # assert  batch_vol == count, 'buffer size mismatch batchsize %d vs task queue size %d' % (batch_vol, count)
-            # ary = np.frombuffer(self.img_buf, count=count, offset=offset).reshape((-1, 3, self.img_size, self.img_size))
-            ary = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
+            if self.use_shared_mem:
+                offset, count = self.task.get()
+                batch_vol = self.batchsize * 3 * self.img_size * self.img_size
+                assert  batch_vol == count, 'buffer size mismatch batchsize %d vs task queue size %d' % (batch_vol, count)
+                ary = np.frombuffer(self.img_buf, count=count, offset=offset).reshape((-1, 3, self.img_size, self.img_size))
+            else:
+                ary = np.empty((self.batchsize, 3, self.img_size, self.img_size), dtype=np.float32)
             imgs = [x[0] for x in imgid_pid[b * self.batchsize: (b + 1) * self.batchsize]]
             pids = [x[1] for x in imgid_pid[b * self.batchsize: (b + 1) * self.batchsize]]
             self.read_images(imgs, ary)
@@ -266,7 +275,10 @@ class DataIter(object):
                 # print 'normalize user/db image'
                 ary -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
                 ary /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
-            self.result.put((ary, pids))
+            if self.use_shared_mem:
+                self.result.put((offset, count, pids))
+            else:
+                self.result.put((ary, pids))
 
 
 def calc_mean_std_for_single(data, nuser, nshop):
