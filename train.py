@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import sys
 import logging
 import time
 import datetime
@@ -12,16 +13,14 @@ from singa import optimizer
 from singa import device
 
 
-def update_perf(his, cur, a=0.8):
-    '''Accumulate the performance by considering history and current values.'''
-    return his * a + cur * (1 - a)
-
-
 def train(cfg, net, train_data, val_data=None):
     log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
     os.makedirs(log_dir)
-    logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
-    logging.info('%s' % cfg.str())
+    if cfg.debug:
+        logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
+    else:
+        logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
+    logging.info(cfg)
 
     if cfg.opt == 'adam':
         opt = optimizer.Adam(weight_decay=cfg.weight_decay)
@@ -35,7 +34,7 @@ def train(cfg, net, train_data, val_data=None):
     precision = []
     for epoch in range(cfg.max_epoch):
         net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
-        net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
+        loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
         if epoch % cfg.search_freq == 0:
             perf, _ = net.retrieval(val_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
             precision.append(perf)
@@ -79,6 +78,8 @@ def create_datasets(args, with_train, with_val, with_test=False):
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
     if with_val:
         val_products = products[num_train_products: num_train_products + num_val_products]
+        val_products = data.filter_products(args.img_dir, img_list_file,
+                val_products, nuser=args.nuser, nshop=args.nshop)
         val_data = data.DataIter(args.img_dir, img_list_file, val_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
     if with_test:
@@ -111,11 +112,12 @@ if __name__ == '__main__':
     parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
     parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
     parser.add_argument("--search_freq", type=int, default=1, help='frequency of validation on retrieval')
+    parser.add_argument("--topk", type=int, default=100, help='top results')
     args = parser.parse_args()
 
     train_data, val_data, _ = create_datasets(args, True, True, False)
     dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.YNIN('YNIN', model.TripletLoss(args.margin), dev, img_size=args.img_size,
+    net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
             batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
     net.init_params(args.param_path)
     args.param_dir = os.path.join(args.param_dir, args.dataset)

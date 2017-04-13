@@ -259,6 +259,7 @@ class DataIter(object):
             self.read_images(imgs, ary)
             # normalize
             if meanstd is not None:
+                print 'normalize user/db image'
                 ary -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
                 ary /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
             self.result.put((offset, count, pids))

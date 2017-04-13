@@ -4,11 +4,18 @@ from singa import layer
 from singa import loss
 from singa import tensor
 import cPickle as pickle
+import logging
 
 import numpy as np
+from numpy.core.umath_tests import inner1d
 import scipy.spatial
 from tqdm import trange
 import time
+
+
+def update_perf(his, cur, a=0.8):
+    '''Accumulate the performance by considering history and current values.'''
+    return his * a + cur * (1 - a)
 
 
 def compute_precision(target):
@@ -56,9 +63,9 @@ def l1(ary):
 
 def loss_bp(is_train, a1, a2, p, n, margin):
     d_ap = a1 - p
-    d1 = np.inner(d_ap, d_ap)
+    d1 = inner1d(d_ap, d_ap)
     d_an = a2 - n
-    d2 = np.inner(d_an, d_an)
+    d2 = inner1d(d_an, d_an)
     d = d1 - d2
     d += margin
     sign = d > 0
@@ -93,7 +100,7 @@ class TripletLoss(loss.Loss):
         for i in range(1, self.nshift+1):
             offset = i * self.nshop
             idx = range(offset, sfea.shape[0]) + range(0, offset)
-            loss, grads = self.loss_bp(is_train, ufea, ufea, sfea, sfea[idx], self.margin)
+            loss, grads = loss_bp(is_train, ufea, ufea, sfea, sfea[idx], self.margin)
             if is_train:
                 self.guser += grads[0] + grads[1]
                 self.gshop += grads[2]
@@ -122,20 +129,20 @@ class YNet(object):
         self.nuser = nuser
         self.nshop = nshop
 
-        self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize, nuser, nshop)
+        self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize)
         self.layers = self.shared + self.user + self.shop
         if debug:
             for lyr in self.layers:
                 print lyr.name, lyr.get_output_sample_shape()
         self.to_device(dev)
 
-    def create_net(self, name, img_size, batchsize=32):
+    def create_net(self, name, img_size, batchsize):
         pass
 
-    def forward(self, is_train, data):
+    def forward(self, is_train, data, to_loss):
         pass
 
-    def backward(self, da, dp, dn):
+    def backward(self):
         pass
 
     def bprop(self, data):
@@ -192,13 +199,15 @@ class YNet(object):
                     continue
                 try:
                     if name == 'conv1-3x3_weight' and len(params[name].shape) == 4:
-                        print name, params[name].shape
                         oc, ic, h, w = params[name].shape
                         assert ic == 3, 'input channel should be 3'
                         w = np.reshape(params[name], (oc, ic, -1))
                         w[:, [0,1,2], :] = w[:, [2,1,0], :]
                         params[name] = np.reshape(w, (oc,-1))
                     val.copy_from_numpy(params[name])
+                    if self.debug:
+                        print name, params[name].shape, val.l1()
+
                 except AssertionError as err:
                     print 'Error from copying values for param: %s' % name
                     print 'shape of param vs checkpoint', \
@@ -210,18 +219,17 @@ class YNet(object):
         data.start(nuser, nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
         for b in bar:
-            grads, l = self.bprop(self, data, opt, nuser, nshop)
-            if cfg.debug:
+            grads, l, t = self.bprop(data)
+            if self.debug:
                 print('-------------prams---------------')
-            for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
-                if cfg.debug:
+            for pname, pval, pgrad in zip(self.param_names(), self.param_values(), grads):
+                if self.debug:
                     print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
                 opt.apply_with_lr(epoch, lr, pgrad, pval, str(pname), b)
             loss = update_perf(loss, l[0])
             dap = update_perf(dap, l[1])
             dan = update_perf(dan, l[2])
-            t3 = time.time()
-            bar.set_postfix(train_loss=loss, dap=dap, dan=dan, bptime=t3-t2, load_time=t2-t1)
+            bar.set_postfix(train_loss=loss, dap=dap, dan=dan, load_time=t[0], bptime=t[1])
         data.stop()
         logging.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
 
@@ -230,7 +238,6 @@ class YNet(object):
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
         query_fea, query_pid = None, []
-        data.start(data.load_user_images)
         for i in bar:
             fea, pid = self.extract_query_feature_on_batch(data)
             query_pid.extend(pid)
@@ -240,7 +247,7 @@ class YNet(object):
         data.stop()
         if self.debug:
             print 'query shape', query_fea.shape
-        return query_fea, query_pids
+        return query_fea, query_pid
 
     def extract_db_feature(self, data):
         '''x for shop images'''
@@ -250,13 +257,12 @@ class YNet(object):
         for i in bar:
             fea, pid = self.extract_db_feature_on_batch(data)
             db_pid.extend(pid)
-            if db is None:
-                db = np.empty((data.db_size,  fea.shape[1]), dtype=np.float32) #data.db_size,
+            if db_fea is None:
+                db_fea = np.empty((data.num_batches * self.batchsize,  fea.shape[1]), dtype=np.float32) #data.db_size,
             db_fea[i*fea.shape[0]:(i+1)*fea.shape[0]] = fea
         data.stop()
-        if debug:
+        if self.debug:
             print 'db shape', db_fea.shape
-        data.stop()
         return db_fea, db_pid
 
     def evaluate_on_epoch(self, epoch, data, nuser, nshop):
@@ -264,7 +270,7 @@ class YNet(object):
         data.start(nuser, nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
         for b in bar:
-            l, ap, an = self.forward(False, data)
+            l, ap, an = self.forward(False, data.next())
             loss += l
             dap += ap
             dan += an
@@ -273,10 +279,11 @@ class YNet(object):
               (epoch, loss / data.num_batches, dap / data.num_batches, dan / data.num_batches)
         print(msg)
         logging.info(msg)
+        return loss / data.num_batches
 
     def retrieval(self, data, result_path, topk=100):
-        query_fea, query_id = extract_query_feature(data)
-        db_fea, db_id = extract_db_feature(data)
+        query_fea, query_id = self.extract_query_feature(data)
+        db_fea, db_id = self.extract_db_feature(data)
         prec, sorted_idx, target, topdist = self.match(query_fea, query_id, db_fea, db_id, topk)
         np.save('%s-dist' % result_path, topdist)
         np.save('%s-target' % result_path, target)
@@ -292,8 +299,8 @@ class YNet(object):
         for i in range(sorted_idx.shape[0]):
             topdist[i] = dist[i, sorted_idx[i]]
 
-        target = np.empty((query_id.shape[0], topk), dtype=np.bool)
-        for i in range(query.shape[0]):
+        target = np.empty((len(query_id), topk), dtype=np.bool)
+        for i in range(len(query_id)):
             for j in range(topk):
                 target[i,j] = db_id[sorted_idx[i, j]] == query_id[i]
         prec = compute_precision(target)
@@ -338,10 +345,10 @@ class YNIN(YNet):
         shared.append(slice_layer)
 
         user = []
-        self.add_conv(user, 'user-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
-        user.append(AvgPooling2D('user-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(Flatten('user-flat', input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(L2Norm('user-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+        self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
@@ -353,7 +360,7 @@ class YNIN(YNet):
         return shared, user, shop
 
     def forward(self, is_train, data, to_loss=True):
-        imgs, pids = data.next()
+        imgs, pids = data
         x = tensor.from_numpy(imgs)
         x.to_device(self.device)
         if self.debug:
@@ -377,7 +384,7 @@ class YNIN(YNet):
             if self.debug:
                 print('%30s = %2.8f' % (lyr.name, b.l1()))
         if to_loss:
-            return self.loss.forward(is_train, a, b, self.nuser, self.nshop, pids)
+            return self.loss.forward(is_train, a, b, pids)
         else:
             return a, b, pids
 
@@ -410,9 +417,13 @@ class YNIN(YNet):
         return param_grads[::-1]
 
     def bprop(self, data):
-        assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
-        loss = self.forward(True, data)
-        return self.backward(), loss
+        t1 = time.time()
+        dat = data.next()
+        t2 = time.time()
+        loss = self.forward(True, dat)
+        ret = self.backward()
+        t3 = time.time()
+        return ret, loss, [t2-t1, t3-t2]
 
     def forward_layers(self, x, layers):
         x = tensor.from_numpy(x)
