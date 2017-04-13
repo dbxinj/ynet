@@ -31,8 +31,8 @@ def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '
     pname2id = {}  # product name to id (index)
     for id, rec in enumerate(products):
         pname2id[rec[0]] = id
+    logging.info('Doing filtering with nuser=%d, nshop=%d' % (nuser, nshop))
 
-    logging.info('Total num of products = %d' % len(products))
     with open(img_file, 'r') as fd:
         for line in fd.readlines():
             rec = line.strip('\n').split(delimiter)
@@ -46,6 +46,7 @@ def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '
     idx1 = user > nuser
     idx2 = shop > nshop
     idx = np.squeeze(np.argwhere(idx1 * idx2 > 0))
+    logging.info('Num of products before and after filtering: %d vs %d' % (len(products), len(idx)))
     return [products[i] for i in idx]
 
 
@@ -74,7 +75,7 @@ def load_shop(obj, proc):
 
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
-            capacity=10, delimiter=' ', nproc=1):
+            capacity=10, delimiter=' ', nproc=1, meanstd=None):
         self.batchsize = batchsize  # num of products to process for training, num of images for val/test
         self.capacity = capacity
         self.proc = []
@@ -117,6 +118,12 @@ class DataIter(object):
 
         self.userid_pid = None
         self.shopid_pid = None
+        if meanstd is None:
+            self.user_meanstd = None
+            self.shop_meanstd = None
+        else:
+            self.user_meanstd = meanstd[0:2]
+            self.shop_meanstd = meanstd[2:]
 
     def clear_queue(self, q):
         while not q.empty():
@@ -222,18 +229,24 @@ class DataIter(object):
                 shop_img.extend(random.sample(self.pid2shopids[pid], nshop))
                 shop_pid.extend([pid] * nshop)
             self.read_images(user_img + shop_img, ary)
+            # normalize
+            if self.user_meanstd is not None:
+                ary[0:self.batchsize*nuser] -= self.user_meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
+                ary[0:self.batchsize*nuser] /= self.user_meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
+                ary[self.batchsize*nuser:] -= self.shop_meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
+                ary[self.batchsize*nuser:] /= self.shop_meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
             self.result.put((offset, count, user_pid + shop_pid))
         logging.info('finish load triples by proc = %d' % proc)
 
     def load_user(self, proc):
-        self.load_single(proc, self.userid_pid)
+        self.load_single(proc, self.userid_pid, self.user_meanstd)
         logging.info('Finish loading user images')
 
     def load_shop(self, proc):
-        self.load_single(proc, self.shopid_pid)
+        self.load_single(proc, self.shopid_pid, self.shop_meanstd)
         logging.info('Finish loading shop images')
 
-    def load_single(self, proc, imgid_pid):
+    def load_single(self, proc, imgid_pid, meanstd):
         bstart, bend = self.get_batch_range(len(imgid_pid) // self.batchsize, proc)
         for b in range(bstart, bend):
             offset, count = self.task.get()
@@ -243,6 +256,10 @@ class DataIter(object):
             imgs = [x[0] for x in imgid_pid[b * self.batchsize: (b + 1) * self.batchsize]]
             pids = [x[1] for x in imgid_pid[b * self.batchsize: (b + 1) * self.batchsize]]
             self.read_images(imgs, ary)
+            # normalize
+            if meanstd is not None:
+                ary -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
+                ary /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
             self.result.put((offset, count, pids))
 
 

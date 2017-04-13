@@ -57,7 +57,7 @@ class TripletLoss(loss.Loss):
         self.gp = None
         self.gn = None
 
-    def forward(self, is_train, a, p, n):
+    def forward(self, is_train, user_fea, shop_fea, pids):
         d_ap = a - p
         d1 = tensor.sum_columns(tensor.square(d_ap))
         d_an = a - n
@@ -80,18 +80,41 @@ class TripletLoss(loss.Loss):
         return self.ga, self.gp, self.gn
 
 
-class CANet(object):
+class YNet(object):
     '''Context-depedent attention modeling'''
-    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=True):
+    def __init__(self, name, loss, dev, img_size, batchsize=32, nuser=1, nshop=1, debug=False):
         self.debug = debug
         self.name = name
         self.loss = loss
         self.device = dev
         self.batchsize = batchsize
         self.img_size = img_size
-        self.layers = []
+        self.nuser = nuser
+        self.nshop = nshop
+
+        self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize, nuser, nshop)
+        self.layers = self.shared + self.user + self.shop
+        if debug:
+            for lyr in self.layers:
+                print lyr.name, lyr.get_output_sample_shape()
+        self.to_device(dev)
 
     def create_net(self, name, img_size, batchsize=32):
+        pass
+
+    def forward(self, is_train, data):
+        pass
+
+    def backward(self, da, dp, dn):
+        pass
+
+    def bprop(self, data):
+        pass
+
+    def extract_query_feature_on_batch(self, data):
+        pass
+
+    def extract_db_feature_on_batch(self, data):
         pass
 
     def to_device(self, dev):
@@ -110,114 +133,6 @@ class CANet(object):
             pvals.extend(lyr.param_values())
         return pvals
 
-    def extract_query_feature(self, x, y):
-        '''x for street images, y for shop image features'''
-        pass
-
-    def extract_db_feature(self, x, tag):
-        '''x for shop images'''
-        pass
-
-    def retrieval(self, data, result_path, meanstd, topk=1000):
-        bar = trange(data.num_batches, desc='Query Image')
-        query_ids = []
-        query = None
-        data.start(data.load_street_images)
-        for i in bar:
-            img, item = data.next()
-            img -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
-            img /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
-            x = np.squeeze(self.extract_query_feature(img, None))
-            query_ids.extend(item)
-            if query is None:
-                query = np.empty((data.query_size, x.shape[1]), dtype=np.float32)  #data.query_size,
-            query[i*x.shape[0]:(i+1)*x.shape[0]]=x
-        print 'query shape', query.shape
-
-        bar = trange(data.shop_batches, desc='Database Image')
-        db_ids = []
-        db = None
-        data.start(data.load_shop_images)
-        for i in bar:
-            img, item, tag = data.next()
-            img -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
-            img /= meanstd[3][np.newaxis, :, np.newaxis, np.newaxis]
-            x = np.squeeze(self.extract_db_feature(img, tag))
-            db_ids.extend(item)
-            if db is None:
-                db = np.empty((data.db_size,  x.shape[1]), dtype=np.float32) #data.db_size,
-            db[i*x.shape[0]:(i+1)*x.shape[0]]=x
-        print 'db shape', db.shape
-
-        data.stop()
-        '''
-        db_ids = [0] * 1000
-        query_ids = [0] * 1000
-        db = np.random.rand(1000, 10)
-        query = np.random.rand(100, 10)
-        '''
-
-        t = time.time()
-        dist=scipy.spatial.distance.cdist(query, db,'euclidean')
-        print('distance computation time = %f' % (time.time() - t))
-        sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
-        topdist = np.empty(sorted_idx.shape, dtype=np.float32)
-        for i in range(sorted_idx.shape[0]):
-            topdist[i] = dist[i, sorted_idx[i]]
-        np.save('%s-dist' % result_path, topdist)
-
-        K=100
-        target = np.empty((query.shape[0], K), dtype=np.bool)
-        for i in range(query.shape[0]):
-            for j in range(K):
-                target[i,j] = db_ids[sorted_idx[i, j]] == query_ids[i]
-        np.save('%s-target' % result_path, target)
-
-        prec = compute_precision(target)
-        print 'Precision ',  prec
-        np.savetxt('%s-precision.txt' % result_path, prec)
-        return query, db, sorted_idx
-
-    def rerank(self, query, db, candidate):
-        pass
-
-
-    def bprop(self, qimg, pimg, nimg, ptag, ntag):
-        pass
-
-    def evaluate(self, qimg, pimg, nimg, ptag, ntag):
-        pass
-
-    def save(self, fpath):
-        params = {}
-        for (name, val) in zip(self.param_names(), self.param_values()):
-            val.to_host()
-            params[name] = tensor.to_numpy(val)
-            with open(fpath, 'wb') as fd:
-                pickle.dump(params, fd)
-
-    def load(self, fpath):
-        with open(fpath, 'rb') as fd:
-                params = pickle.load(fd)
-                for name, val in zip(self.param_names(), self.param_values()):
-                    if name not in params:
-                        print 'Param: %s missing in the checkpoint file' % name
-                        continue
-                    try:
-                        if name == 'conv1-3x3_weight' and len(params[name].shape) == 4:
-                            print name, params[name].shape
-                            oc, ic, h, w = params[name].shape
-                            assert ic == 3, 'input channel should be 3'
-                            w = np.reshape(params[name], (oc, ic, -1))
-                            w[:, [0,1,2], :] = w[:, [2,1,0], :]
-                            params[name] = np.reshape(w, (oc,-1))
-                        val.copy_from_numpy(params[name])
-                    except AssertionError as err:
-                        print 'Error from copying values for param: %s' % name
-                        print 'shape of param vs checkpoint', \
-                                val.shape, params[name].shape
-                        raise err
-
     def init_params(self, weight_path=None):
         if weight_path is None:
             for pname, pval in zip(self.param_names(), self.param_values()):
@@ -230,19 +145,139 @@ class CANet(object):
         else:
             self.load(weight_path)
 
+    def save(self, fpath):
+        params = {}
+        for (name, val) in zip(self.param_names(), self.param_values()):
+            val.to_host()
+            params[name] = tensor.to_numpy(val)
+            with open(fpath, 'wb') as fd:
+                pickle.dump(params, fd)
 
-class CANIN(CANet):
-    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=True):
-        super(CANIN, self).__init__(name, loss, dev, img_size, batchsize, debug)
-        self.shared, self.street, self.shop = self.create_net(name, img_size, batchsize)
-        self.layers.extend(self.shared)
-        self.layers.extend(self.street)
-        self.layers.extend(self.shop)
+    def load(self, fpath):
+        with open(fpath, 'rb') as fd:
+            params = pickle.load(fd)
+            for name, val in zip(self.param_names(), self.param_values()):
+                if name not in params:
+                    print 'Param: %s missing in the checkpoint file' % name
+                    continue
+                try:
+                    if name == 'conv1-3x3_weight' and len(params[name].shape) == 4:
+                        print name, params[name].shape
+                        oc, ic, h, w = params[name].shape
+                        assert ic == 3, 'input channel should be 3'
+                        w = np.reshape(params[name], (oc, ic, -1))
+                        w[:, [0,1,2], :] = w[:, [2,1,0], :]
+                        params[name] = np.reshape(w, (oc,-1))
+                    val.copy_from_numpy(params[name])
+                except AssertionError as err:
+                    print 'Error from copying values for param: %s' % name
+                    print 'shape of param vs checkpoint', \
+                            val.shape, params[name].shape
+                    raise err
+
+      def train_on_epoch(self, epoch, data, opt, lr, nuser, nshop):
+        loss, dap, dan = 0, 0, 0
+        data.start(nuser, nshop)
+        bar = trange(data.num_batches, desc='Epoch %d' % epoch)
+        for b in bar:
+            grads, l = self.bprop(self, data, opt, nuser, nshop)
+            if cfg.debug:
+                print('-------------prams---------------')
+            for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
+                if cfg.debug:
+                    print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
+                opt.apply_with_lr(epoch, lr, pgrad, pval, str(pname), b)
+            loss = update_perf(loss, l[0])
+            dap = update_perf(dap, l[1])
+            dan = update_perf(dan, l[2])
+            t3 = time.time()
+            bar.set_postfix(train_loss=loss, dap=dap, dan=dan, bptime=t3-t2, load_time=t2-t1)
+        logging.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
+
+    def extract_query_feature(self, data):
+        '''x for user images, y for shop image features'''
+        data.start(1, 0)
+        bar = trange(data.num_batches, desc='Query Image')
+        query_fea, query_pid = None, []
+        data.start(data.load_user_images)
+        for i in bar:
+            fea, pid = self.extract_query_feature_on_batch(data)
+            query_pid.extend(pid)
+            if query_fea is None:
+                query_fea = np.empty((data.num_batches * self.batchsize, x.shape[1]), dtype=np.float32)  #data.query_size,
+            query_fea[i*x.shape[0]:(i+1)*x.shape[0]] = fea
+        data.stop()
+        if self.debug:
+            print 'query shape', query_fea.shape
+        return query_fea, query_pids
+
+    def extract_db_feature(self, data):
+        '''x for shop images'''
+        data.start(0, 1)
+        bar = trange(data.num_batches, desc='Database Image')
+        db_fea, db_pid = None, []
+        for i in bar:
+            fea, pid = self.extract_db_feature_on_batch(data)
+            db_pid.extend(pid)
+            if db is None:
+                db = np.empty((data.db_size,  x.shape[1]), dtype=np.float32) #data.db_size,
+            db_fea[i*x.shape[0]:(i+1)*x.shape[0]] = fea
+        data.stop()
         if debug:
-            for lyr in self.layers:
-                print lyr.name, lyr.get_output_sample_shape()
-        self.to_device(dev)
+            print 'db shape', db_fea.shape
+        data.stop()
+        return db_fea, db_pid
 
+    def evaluate_on_epoch(self, epoch, data, nuser, nshop):
+        loss, dap, dan = 0, 0, 0
+        data.start(nuser, nshop)
+        bar = trange(data.num_batches, desc='Epoch %d' % epoch)
+        for b in bar:
+            l, ap, an = self.forward(False, data)
+            loss += l
+            dap += ap
+            dan += an
+        data.stop()
+        msg = 'Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
+              (epoch, loss / data.num_batches, dap / data.num_batches, dan / data.num_batches)
+        print(msg)
+        logging.info(msg)
+
+    def retrieval(self, data, result_path, topk=100):
+        query_fea, query_id = extract_query_feature(data)
+        db_fea, db_id = extract_db_feature(data)
+        prec, sorted_idx, target, topdist = self.match(query_fea, query_id, db_fea, db_id, topk)
+        np.save('%s-dist' % result_path, topdist)
+        np.save('%s-target' % result_path, target)
+        np.savetxt('%s-precision.txt' % result_path, prec)
+        return prec, sorted_idx
+
+    def match(self, query_fea, query_id, db_fea, db_id, topk=100):
+        t = time.time()
+        dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
+        print('distance computation time = %f' % (time.time() - t))
+        sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
+        topdist = np.empty(sorted_idx.shape, dtype=np.float32)
+        for i in range(sorted_idx.shape[0]):
+            topdist[i] = dist[i, sorted_idx[i]]
+
+        target = np.empty((query_id.shape[0], topk), dtype=np.bool)
+        for i in range(query.shape[0]):
+            for j in range(topk):
+                target[i,j] = db_id[sorted_idx[i, j]] == query_id[i]
+        prec = compute_precision(target)
+        return prec, sorted_idx, target, topdist
+
+    def rerank(self, data, result_path, candidate_size=1000, topk=100):
+        pass
+        '''
+        db_ids = [0] * 1000
+        query_ids = [0] * 1000
+        db = np.random.rand(1000, 10)
+        query = np.random.rand(100, 10)
+        '''
+
+class YNIN(YNet):
     def add_conv(self, layers, name, nb_filter, size, stride, pad=0, sample_shape=None):
         if sample_shape != None:
             layers.append(Conv2D('%s-3x3' % name, nb_filter[0], size, stride, pad=pad,
@@ -268,26 +303,26 @@ class CANIN(CANet):
 
         self.add_conv(shared, 'conv3', [384, 384, 384], 3, 1, 1)
         shared.append(MaxPooling2D('p3', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
-        slice_layer = Slice('slice', 0, [batchsize], input_sample_shape=shared[-1].get_output_sample_shape())
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
         shared.append(slice_layer)
 
-        street = []
-        self.add_conv(street, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
-        street.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=street[-1].get_output_sample_shape()))
-        street.append(Flatten('street-flat', input_sample_shape=street[-1].get_output_sample_shape()))
-        street.append(L2Norm('street-l2', input_sample_shape=street[-1].get_output_sample_shape()))
+        user = []
+        self.add_conv(user, 'user-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        user.append(AvgPooling2D('user-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Flatten('user-flat', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(L2Norm('user-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
-        shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
+#        shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
 
-        return shared, street, shop
+        return shared, user, shop
 
-    def forward(self, is_train, qimg, pimg, nimg, ptag, ntag):
-        x = np.concatenate((qimg, pimg, nimg), axis=0)
+    def forward(self, is_train, data, to_loss=True):
+        imgs, pids = data.next()
         x = tensor.from_numpy(x)
         x.to_device(self.device)
         if self.debug:
@@ -302,7 +337,7 @@ class CANIN(CANet):
                 else:
                     print('%30s = %2.8f, %2.8f' % (lyr.name, x[0].l1(), x[1].l1()))
         a, b = x
-        for lyr in self.street:
+        for lyr in self.user:
             a = lyr.forward(is_train, a)
             if self.debug:
                 print('%30s = %2.8f' % (lyr.name, a.l1()))
@@ -313,14 +348,15 @@ class CANIN(CANet):
                     print('%30s = %2.8f' % (lyr.name, b.l1()))
                 else:
                     print('%30s = %2.8f, %2.8f' % (lyr.name, b[0].l1(), b[1].l1()))
-        p, n = b
-        return a, p, n
+        if to_loss:
+            return = self.loss.forward(is_train, a, b, pids)
+        else:
+            return a, b, pids
 
-    def backward(self, da, dp, dn):
+    def backward(self, duser, dshop):
         if self.debug:
             print '------------backward------------'
         param_grads = []
-        dshop = [dp, dn]
         for lyr in self.shop[::-1]:
             dshop, dp = lyr.backward(True, dshop)
             if self.debug:
@@ -328,14 +364,14 @@ class CANIN(CANet):
             if dp is not None:
                 param_grads.extend(dp[::-1])
 
-        for lyr in self.street[::-1]:
-            da, dp = lyr.backward(True, da)
+        for lyr in self.user[::-1]:
+            duser, dp = lyr.backward(True, duser)
             if self.debug:
-                print('%30s = %2.8f' % (lyr.name, da.l1()))
+                print('%30s = %2.8f' % (lyr.name, duser.l1()))
             if dp is not None:
                 param_grads.extend(dp[::-1])
 
-        d = [da, dshop]
+        d = [duser, dshop]
         for lyr in self.shared[::-1]:
             d, dp = lyr.backward(True, d)
             if self.debug:
@@ -344,18 +380,11 @@ class CANIN(CANet):
                 param_grads.extend(dp[::-1])
         return param_grads[::-1]
 
-    def bprop(self, qimg, pimg, nimg, ptag, ntag):
+    def bprop(self, data):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
-        a, p, n = self.forward(True, qimg, pimg, nimg, ptag, ntag)
-        loss = self.loss.forward(True, a, p, n)
-        da, dp, dn = self.loss.backward()
-        return self.backward(da, dp, dn), loss
-
-    def evaluate(self, qimg, pimg, nimg, ptag, ntag):
-        assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
-        a, p, n = self.forward(False, qimg, pimg, nimg, ptag, ntag)
-        loss = self.loss.forward(False, a, p, n)
-        return loss
+        loss = self.forward(True, data)
+        duser, dshop = self.loss.backward()
+        return self.backward(duser, dshop), loss
 
     def forward_layers(self, x, layers):
         x = tensor.from_numpy(x)
@@ -371,9 +400,12 @@ class CANIN(CANet):
                     print('%30s = %2.8f' % (lyr.name, x.l1()))
         return tensor.to_numpy(x)
 
+    def extract_query_feature_on_batch(self, data):
+        img, pid = data.next()
+        fea = self.forward_layers(img, self.shared[0:-1] + self.user)
+        return fea, pid
 
-    def extract_query_feature(self, x, y):
-        return self.forward_layers(x, self.shared[0:-1] + self.street)
-
-    def extract_db_feature(self, x, tag):
-        return self.forward_layers(x, self.shared[0:-1] + self.shop[0:-1])
+    def extract_db_feature_on_batch(self, data):
+        img, pid = data.next()
+        fea = self.forward_layers(img, self.shared[0:-1] + self.shop[0:-1])
+        return fea, pid
