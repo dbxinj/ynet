@@ -50,34 +50,64 @@ class L2Norm(layer.Layer):
         return dx, []
 
 
+def l1(ary):
+    return np.average(np.abs(ary))
+
+
+def loss_bp(is_train, a1, a2, p, n, margin):
+    d_ap = a1 - p
+    d1 = np.inner(d_ap, d_ap)
+    d_an = a2 - n
+    d2 = np.inner(d_an, d_an)
+    d = d1 - d2
+    d += margin
+    sign = d > 0
+    loss = d * sign
+    batchsize = float(a1.shape[0])
+    grads = None
+    if is_train:
+        gp = d_ap * sign[:, np.newaxis] * (-2 / batchsize)
+        gn = d_an * sign[:, np.newaxis] * (2 / batchsize)
+        grads = [-gp, -gn, gp, gn]
+    return ([l1(loss), l1(d1), l1(d2)], grads)
+
+
 class TripletLoss(loss.Loss):
-    def __init__(self, margin=0.1):
+    def __init__(self, margin=0.1, nshift=1, nuser=1, nshop=1):
         self.margin = margin
-        self.ga = None
-        self.gp = None
-        self.gn = None
+        self.nshift = nshift
+        self.nuser = nuser
+        self.nshop = nshop
+        self.guser = None
+        self.gshop = None
+        self.dev = None
 
     def forward(self, is_train, user_fea, shop_fea, pids):
-        d_ap = a - p
-        d1 = tensor.sum_columns(tensor.square(d_ap))
-        d_an = a - n
-        d2 = tensor.sum_columns(tensor.square(d_an))
-        d = d1 - d2
-        d += self.margin
-        sign = d > float(0)
-        loss = tensor.eltwise_mult(d, sign)
-        batchsize = float(a.shape[0])
+        ufea = tensor.to_numpy(user_fea)
+        sfea = tensor.to_numpy(shop_fea)
         if is_train:
-            self.ga = (n - p) * (2 / batchsize)
-            self.ga.mult_column(sign)
-            self.gp = d_ap * (-2 / batchsize)
-            self.gp.mult_column(sign)
-            self.gn = d_an * (2 / batchsize)
-            self.gn.mult_column(sign)
-        return (loss.l1(), d1.l1(), d2.l1())
+            self.dev = user_fea.device
+            self.guser = np.zeros(ufea.shape, dtype=np.float32)
+            self.gshop = np.zeros(sfea.shape, dtype=np.float32)
+        ret = [0, 0, 0]
+        for i in range(1, self.nshift+1):
+            offset = i * self.nshop
+            idx = range(offset, sfea.shape[0]) + range(0, offset)
+            loss, grads = self.loss_bp(is_train, ufea, ufea, sfea, sfea[idx], self.margin)
+            if is_train:
+                self.guser += grads[0] + grads[1]
+                self.gshop += grads[2]
+                self.gshop[idx] += grads[3]
+            for r, l in zip(ret, loss):
+                r += l
+        return [r/self.nshift for r in ret]
 
     def backward(self):
-        return self.ga, self.gp, self.gn
+        tguser = tensor.from_numpy(self.guser/self.nshift)
+        tgshop = tensor.from_numpy(self.gshop/self.nshift)
+        tguser.to_device(self.dev)
+        tgshop.to_device(self.dev)
+        return tguser, tgshop
 
 
 class YNet(object):
@@ -175,7 +205,7 @@ class YNet(object):
                             val.shape, params[name].shape
                     raise err
 
-      def train_on_epoch(self, epoch, data, opt, lr, nuser, nshop):
+    def train_on_epoch(self, epoch, data, opt, lr, nuser, nshop):
         loss, dap, dan = 0, 0, 0
         data.start(nuser, nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
@@ -192,6 +222,7 @@ class YNet(object):
             dan = update_perf(dan, l[2])
             t3 = time.time()
             bar.set_postfix(train_loss=loss, dap=dap, dan=dan, bptime=t3-t2, load_time=t2-t1)
+        data.stop()
         logging.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
 
     def extract_query_feature(self, data):
@@ -204,8 +235,8 @@ class YNet(object):
             fea, pid = self.extract_query_feature_on_batch(data)
             query_pid.extend(pid)
             if query_fea is None:
-                query_fea = np.empty((data.num_batches * self.batchsize, x.shape[1]), dtype=np.float32)  #data.query_size,
-            query_fea[i*x.shape[0]:(i+1)*x.shape[0]] = fea
+                query_fea = np.empty((data.num_batches * self.batchsize, fea.shape[1]), dtype=np.float32)  #data.query_size,
+            query_fea[i*fea.shape[0]:(i+1)*fea.shape[0]] = fea
         data.stop()
         if self.debug:
             print 'query shape', query_fea.shape
@@ -220,8 +251,8 @@ class YNet(object):
             fea, pid = self.extract_db_feature_on_batch(data)
             db_pid.extend(pid)
             if db is None:
-                db = np.empty((data.db_size,  x.shape[1]), dtype=np.float32) #data.db_size,
-            db_fea[i*x.shape[0]:(i+1)*x.shape[0]] = fea
+                db = np.empty((data.db_size,  fea.shape[1]), dtype=np.float32) #data.db_size,
+            db_fea[i*fea.shape[0]:(i+1)*fea.shape[0]] = fea
         data.stop()
         if debug:
             print 'db shape', db_fea.shape
@@ -323,7 +354,7 @@ class YNIN(YNet):
 
     def forward(self, is_train, data, to_loss=True):
         imgs, pids = data.next()
-        x = tensor.from_numpy(x)
+        x = tensor.from_numpy(imgs)
         x.to_device(self.device)
         if self.debug:
             print '------------forward------------'
@@ -344,19 +375,17 @@ class YNIN(YNet):
         for lyr in self.shop:
             b = lyr.forward(is_train, b)
             if self.debug:
-                if type(b) == tensor.Tensor:
-                    print('%30s = %2.8f' % (lyr.name, b.l1()))
-                else:
-                    print('%30s = %2.8f, %2.8f' % (lyr.name, b[0].l1(), b[1].l1()))
+                print('%30s = %2.8f' % (lyr.name, b.l1()))
         if to_loss:
-            return = self.loss.forward(is_train, a, b, pids)
+            return self.loss.forward(is_train, a, b, self.nuser, self.nshop, pids)
         else:
             return a, b, pids
 
-    def backward(self, duser, dshop):
+    def backward(self):
         if self.debug:
             print '------------backward------------'
         param_grads = []
+        duser, dshop = self.loss.backward()
         for lyr in self.shop[::-1]:
             dshop, dp = lyr.backward(True, dshop)
             if self.debug:
@@ -383,8 +412,7 @@ class YNIN(YNet):
     def bprop(self, data):
         assert self.batchsize == qimg.shape[0], 'batchsize not correct %d vs %d' % (self.batchsize, qimg.shape[0])
         loss = self.forward(True, data)
-        duser, dshop = self.loss.backward()
-        return self.backward(duser, dshop), loss
+        return self.backward(), loss
 
     def forward_layers(self, x, layers):
         x = tensor.from_numpy(x)

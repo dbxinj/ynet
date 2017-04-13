@@ -193,6 +193,7 @@ class DataIter(object):
 
     def read_images(self, id_list, ret):
         for i, id in enumerate(id_list):
+            # print self.img_path[id]
             ret[i, :]=self.read_image(os.path.join(self.img_dir, self.img_path[id]))
 
     def read_image(self, path, is_train=True):
@@ -286,10 +287,9 @@ def calc_mean_std_for_single(data, nuser, nshop):
     return rgb, std
 
 
-def calc_mean_std(img_dir, data_dir):
+def calc_mean_std(img_dir, data_dir, ratio=0.5):
     products = read_products(os.path.join(data_dir, 'product.txt'))
-    # products = filter_products(img_dir, os.path.join(data_dir, 'image.txt'), products)
-    data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products[0: int(0.5 * len(products))])
+    data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products[0: int(ratio * len(products))])
     qrgb, qstd = calc_mean_std_for_single(data, 1, 0)
     nrgb, nstd = calc_mean_std_for_single(data, 0, 1)
     ary = np.array([qrgb, qstd, nrgb, nstd], dtype=np.float32)
@@ -308,7 +308,8 @@ def benchmark(img_dir, data_dir):
 
     products = read_products(os.path.join(data_dir, 'product.txt'))[0:1000]
     products = filter_products(img_dir, os.path.join(data_dir, 'image.txt'), products)
-    data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products)
+    meanstd = np.load(os.path.join(data_dir, 'mean-std.npy'))
+    data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products, meanstd=meanstd)
     data.start(1, 1)
     t = time.time()
     for i in range(data.num_batches):
@@ -319,7 +320,7 @@ def benchmark(img_dir, data_dir):
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
     img_dir = '../darn'
-    # benchmark(img_dir, 'data/darn-new')
-    data_dir = 'data/darn-new/'
-    ary = calc_mean_std(img_dir, data_dir)
-    np.save(os.path.join(data_dir, 'mean-std'), ary)
+    data_dir = 'data/darn/'
+    benchmark(img_dir, data_dir)
+    # ary = calc_mean_std(img_dir, data_dir, 0.02)
+    # np.save(os.path.join(data_dir, 'mean-std'), ary)
