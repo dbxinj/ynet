@@ -14,14 +14,6 @@ from singa import device
 
 
 def train(cfg, net, train_data, val_data=None):
-    log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
-    os.makedirs(log_dir)
-    if cfg.debug:
-        logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
-    else:
-        logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
-    logging.info(cfg)
-
     if cfg.opt == 'adam':
         opt = optimizer.Adam(weight_decay=cfg.weight_decay)
     elif cfg.opt == 'nesterov':
@@ -122,4 +114,13 @@ if __name__ == '__main__':
     net.init_params(args.param_path)
     args.param_dir = os.path.join(args.param_dir, args.dataset)
     os.makedirs(args.param_dir)
+
+    log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+    os.makedirs(log_dir)
+    if args.debug:
+        logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
+    else:
+        logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
+    logging.info(args)
+
     train(args, net, train_data, val_data)
