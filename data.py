@@ -214,7 +214,7 @@ class DataIter(object):
         nbatch_per_proc = nbatches // self.nproc
         start = proc * nbatch_per_proc
         end = start + nbatch_per_proc
-        if proc == self.nproc:
+        if proc == self.nproc - 1:
             end += nbatches % self.nproc
         return start, end
 
