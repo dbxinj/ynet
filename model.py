@@ -7,6 +7,7 @@ import cPickle as pickle
 import logging
 
 import numpy as np
+import math
 from numpy.core.umath_tests import inner1d
 import scipy.spatial
 from tqdm import trange
@@ -231,8 +232,11 @@ class YNet(object):
             dap = update_perf(dap, l[1])
             dan = update_perf(dan, l[2])
             bar.set_postfix(train_loss=loss, dap=dap, dan=dan, load_time=t[0], bptime=t[1])
+            if math.isnan(loss) or math.isinf(loss):
+                break
         data.stop()
         logger.info('Epoch %d, training loss = %f,  pos dist = %f, neg dist = %f' % (epoch, loss, dap, dan))
+        return loss
 
     def extract_query_feature(self, data):
         '''x for user images, y for shop image features'''
@@ -286,15 +290,15 @@ class YNet(object):
         query_fea, query_id = self.extract_query_feature(data)
         db_fea, db_id = self.extract_db_feature(data)
         prec, sorted_idx, target, topdist = self.match(query_fea, query_id, db_fea, db_id, topk)
-        np.save('%s-dist' % result_path, topdist)
-        np.save('%s-target' % result_path, target)
-        np.savetxt('%s-precision.txt' % result_path, prec)
+        # np.save('%s-dist' % result_path, topdist)
+        # np.save('%s-target' % result_path, target)
+        # np.savetxt('%s-precision.txt' % result_path, prec)
         return prec, sorted_idx
 
     def match(self, query_fea, query_id, db_fea, db_id, topk=100):
         t = time.time()
         dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
-        print('distance computation time = %f' % (time.time() - t))
+        logger.info('distance computation time = %f' % (time.time() - t))
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
         topdist = np.empty(sorted_idx.shape, dtype=np.float32)
         for i in range(sorted_idx.shape[0]):

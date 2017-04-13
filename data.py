@@ -28,7 +28,7 @@ def read_products(fpath, delimiter=' ', seed=-1):
         random.shuffle(products)
     return products
 
-def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '):
+def filter_products(img_dir, img_file, products, nuser, nshop, delimiter=' '):
     user = np.zeros((len(products),), dtype=int)
     shop = np.zeros((len(products),), dtype=int)
     pname2id = {}  # product name to id (index)
@@ -46,8 +46,8 @@ def filter_products(img_dir, img_file, products, nuser=0, nshop=0, delimiter=' '
                         user[pid] += 1
                     else:
                         shop[pid] += 1
-    idx1 = user > nuser
-    idx2 = shop > nshop
+    idx1 = user >= nuser
+    idx2 = shop >= nshop
     idx = np.squeeze(np.argwhere(idx1 * idx2 > 0))
     logger.info('Num of products before and after filtering: %d vs %d' % (len(products), len(idx)))
     return [products[i] for i in idx]
@@ -249,15 +249,15 @@ class DataIter(object):
                 self.result.put((offset, count, user_pid + shop_pid))
             else:
                 self.result.put((ary, user_pid + shop_pid))
-        logger.info('finish load triples by proc = %d' % proc)
+        # logger.info('finish load triples by proc = %d' % proc)
 
     def load_user(self, proc):
         self.load_single(proc, self.userid_pid, self.user_meanstd)
-        logger.info('Finish loading user images')
+        # logger.info('Finish loading user images')
 
     def load_shop(self, proc):
         self.load_single(proc, self.shopid_pid, self.shop_meanstd)
-        logger.info('Finish loading shop images')
+        # logger.info('Finish loading shop images')
 
     def load_single(self, proc, imgid_pid, meanstd):
         bstart, bend = self.get_batch_range(len(imgid_pid) // self.batchsize, proc)
@@ -337,7 +337,7 @@ def benchmark(img_dir, data_dir):
 
 
 if __name__ == '__main__':
-    logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
+    # logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
     img_dir = '../darn'
     data_dir = 'data/darn/'
     benchmark(img_dir, data_dir)

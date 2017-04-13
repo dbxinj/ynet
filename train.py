@@ -1,11 +1,18 @@
 import numpy as np
+import random
 import os
+import math
 import sys
 import logging
 import time
 import datetime
 from argparse import ArgumentParser
 from tqdm import trange
+
+log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+os.makedirs(log_dir)
+# logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
 
 import model
 import data
@@ -14,6 +21,7 @@ from singa import device
 
 
 def train(cfg, net, train_data, val_data, test_data=None):
+    logging.info(cfg)
     if cfg.opt == 'adam':
         opt = optimizer.Adam(weight_decay=cfg.weight_decay)
     elif cfg.opt == 'nesterov':
@@ -25,14 +33,19 @@ def train(cfg, net, train_data, val_data, test_data=None):
     nb_epoch_after_best = 0
     precision = []
     for epoch in range(cfg.max_epoch):
-        net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
-        loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
+        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
+        if math.isnan(train_loss) or math.isinf(train_loss):
+            return
+        val_loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
+        if math.isnan(val_loss) or math.isinf(val_loss):
+            return
         if epoch % cfg.search_freq == 0 and test_data is not None:
             perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
             precision.append(perf)
             logging.info('Retrieval performance of epoch %d = %s' % (epoch, perf))
             print perf
-
+            # net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
+        '''
         if loss < best_loss - best_loss/10:
             if epoch > 5 and loss < best_loss - best_loss/5:
                 net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
@@ -46,6 +59,7 @@ def train(cfg, net, train_data, val_data, test_data=None):
                 cfg.lr /= 10
                 print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
                 logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
+        '''
     net.save(os.path.join(cfg.param_dir, 'model'))
     print precision
 
@@ -55,13 +69,10 @@ def create_datasets(args, with_train, with_val, with_test=False):
     meanstd = np.load(os.path.join(data_dir, 'mean-std.npy'))
     img_list_file = os.path.join(data_dir, 'image.txt')
     product_list_file = os.path.join(data_dir, 'product.txt')
-    products = data.read_products(product_list_file)
+    products = data.read_products(product_list_file) #[0:2000]
     num_products = len(products)
     num_train_products = int(num_products * args.train_split)
     num_val_products = (num_products - num_train_products) // 2
-    if args.debug:
-        num_train_products = 2000
-        num_val_products = 500
     train_data, val_data, test_data = None, None, None
     if with_train:
         train_products = data.filter_products(args.img_dir, img_list_file,
@@ -80,6 +91,17 @@ def create_datasets(args, with_train, with_val, with_test=False):
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
 
     return train_data, val_data, test_data
+
+
+def gen_cfg(cfg):
+    cfg.lr=random.choice([0.1, 0.01, 0.001, 0.0001])
+    cfg.mom=random.choice([0.5, 0.8, 0.9])
+    cfg.decay=random.choice([5e-4, 1e-4, 5e-5, 1e-5])
+    cfg.opt=random.choice(['sgd', 'adam', 'nesterov'])
+    if cfg.opt == 'adam':
+        cfg.mom = 0
+    cfg.margin=random.choice([1.5, 1.2, 1.0, 0.8, 0.5, 0.2, 0.1])
+    return cfg
 
 
 if __name__ == '__main__':
@@ -111,16 +133,10 @@ if __name__ == '__main__':
     dev = device.create_cuda_gpu_on(args.gpu)
     net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
             batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
-    net.init_params(args.param_path)
-    args.param_dir = os.path.join(args.param_dir, args.dataset)
-    os.makedirs(args.param_dir)
-
-    log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
-    os.makedirs(log_dir)
-    if args.debug:
-        logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
-    else:
-        logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
-    logging.info(args)
-
-    train(args, net, train_data, val_data, test_data)
+    for i in range(20):
+        args = gen_cfg(args)
+        logging.info('\n\n-----------------------%d trail----------------------------' % i)
+        args.param_dir =  os.path.join('param', '%s-%d' % (args.dataset, i))
+        os.makedirs(args.param_dir)
+        net.init_params(args.param_path)
+        train(args, net, train_data, val_data, test_data)
