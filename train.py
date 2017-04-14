@@ -22,6 +22,7 @@ from singa import device
 
 def train(cfg, net, train_data, val_data, test_data=None):
     logging.info(cfg)
+    print cfg
     if cfg.opt == 'adam':
         opt = optimizer.Adam(weight_decay=cfg.weight_decay)
     elif cfg.opt == 'nesterov':
