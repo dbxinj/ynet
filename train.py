@@ -35,14 +35,13 @@ def train(cfg, net, train_data, val_data, test_data=None):
     for epoch in range(cfg.max_epoch):
         train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
         logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
-
-        if math.isnan(train_loss) or math.isinf(train_loss):
+        if np.any(np.isnan(train_loss)) or np.any(np.isinf(train_loss)):
             return
 
         val_loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
         logging.info('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
         print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
-        if math.isnan(val_loss) or math.isinf(val_loss):
+        if np.any(np.isnan(val_loss)) or np.any(np.isinf(val_loss)):
             return
         if epoch % cfg.search_freq == 0 and test_data is not None:
             perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
