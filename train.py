@@ -34,16 +34,21 @@ def train(cfg, net, train_data, val_data, test_data=None):
     precision = []
     for epoch in range(cfg.max_epoch):
         train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
+        logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
+
         if math.isnan(train_loss) or math.isinf(train_loss):
             return
+
         val_loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
+        logging.info('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
+        print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
         if math.isnan(val_loss) or math.isinf(val_loss):
             return
         if epoch % cfg.search_freq == 0 and test_data is not None:
             perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
             precision.append(perf)
-            logging.info('Retrieval performance of epoch %d = %s' % (epoch, perf))
-            print perf
+            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
+            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
             # net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
         '''
         if loss < best_loss - best_loss/10:
@@ -61,7 +66,8 @@ def train(cfg, net, train_data, val_data, test_data=None):
                 logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
         '''
     net.save(os.path.join(cfg.param_dir, 'model'))
-    print precision
+    for prec in precision:
+        print precision
 
 
 def create_datasets(args, with_train, with_val, with_test=False):
@@ -96,7 +102,7 @@ def create_datasets(args, with_train, with_val, with_test=False):
 def gen_cfg(cfg):
     cfg.lr=random.choice([0.1, 0.01, 0.001, 0.0001])
     cfg.mom=random.choice([0.5, 0.8, 0.9])
-    cfg.decay=random.choice([5e-4, 1e-4, 5e-5, 1e-5])
+    cfg.weight_decay=random.choice([5e-4, 1e-4, 5e-5, 1e-5])
     cfg.opt=random.choice(['sgd', 'adam', 'nesterov'])
     if cfg.opt == 'adam':
         cfg.mom = 0

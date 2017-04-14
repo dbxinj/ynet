@@ -79,7 +79,7 @@ def loss_bp(is_train, a1, a2, p, n, margin):
         gp = d_ap * sign[:, np.newaxis] * (-2 / batchsize)
         gn = d_an * sign[:, np.newaxis] * (2 / batchsize)
         grads = [-gp, -gn, gp, gn]
-    return (np.array([l1(loss), l1(d1), l1(d2)]), grads)
+    return (np.array([l1(loss), np.average(sign), l1(d1), l1(d2)]), grads)
 
 
 class TripletLoss(loss.Loss):
@@ -99,7 +99,7 @@ class TripletLoss(loss.Loss):
             self.dev = user_fea.device
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
             self.gshop = np.zeros(sfea.shape, dtype=np.float32)
-        ret = np.zeros((3,), dtype=float)
+        ret = None
         for i in range(1, self.nshift+1):
             offset = i * self.nshop
             idx = range(offset, sfea.shape[0]) + range(0, offset)
@@ -108,6 +108,8 @@ class TripletLoss(loss.Loss):
                 self.guser += grads[0] + grads[1]
                 self.gshop += grads[2]
                 self.gshop[idx] += grads[3]
+            if ret is None:
+                ret = np.zeros(loss.shape)
             ret += loss
         return ret/self.nshift
 
@@ -271,20 +273,17 @@ class YNet(object):
         return db_fea, db_pid
 
     def evaluate_on_epoch(self, epoch, data, nuser, nshop):
-        loss, dap, dan = 0, 0, 0
+        loss = None
         data.start(nuser, nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
         for b in bar:
-            l, ap, an = self.forward(False, data.next())
+            l = self.forward(False, data.next())
+            if loss is None:
+                loss = np.zeros(l.shape)
             loss += l
-            dap += ap
-            dan += an
+        loss /= data.num_batches
         data.stop()
-        msg = 'Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
-              (epoch, loss / data.num_batches, dap / data.num_batches, dan / data.num_batches)
-        print(msg)
-        logger.info(msg)
-        return loss / data.num_batches
+        return loss
 
     def retrieval(self, data, result_path, topk=100):
         query_fea, query_id = self.extract_query_feature(data)
@@ -298,7 +297,7 @@ class YNet(object):
     def match(self, query_fea, query_id, db_fea, db_id, topk=100):
         t = time.time()
         dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
-        logger.info('distance computation time = %f' % (time.time() - t))
+        # logger.info('distance computation time = %f' % (time.time() - t))
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
         topdist = np.empty(sorted_idx.shape, dtype=np.float32)
         for i in range(sorted_idx.shape[0]):
