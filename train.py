@@ -142,7 +142,7 @@ if __name__ == '__main__':
     for i in range(20):
         args = gen_cfg(args)
         logging.info('\n\n-----------------------%d trail----------------------------' % i)
-        args.param_dir =  os.path.join('param', '%s-%d' % (args.dataset, i))
+        args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
         os.makedirs(args.param_dir)
         net.init_params(args.param_path)
         train(args, net, train_data, val_data, test_data)
