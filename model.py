@@ -7,7 +7,6 @@ import cPickle as pickle
 import logging
 
 import numpy as np
-import math
 from numpy.core.umath_tests import inner1d
 import scipy.spatial
 from tqdm import trange
@@ -60,6 +59,19 @@ class L2Norm(layer.Layer):
         return dx, []
 
 
+class TagAttention(tensor.Layer):
+    def __init__(self, name, input_sample_shape):
+        c, h, w = input_sample_shape[0]
+        dim = input_sample_shape[1]
+        self.W=tensor.Tensor((dim, c))
+
+    def forward(self, is_train, xs):
+        pass
+
+    def backward(self):
+        pass
+
+
 def l1(ary):
     return np.average(ary)
 
@@ -93,8 +105,10 @@ class TripletLoss(loss.Loss):
         self.dev = None
 
     def forward(self, is_train, user_fea, shop_fea, pids):
-        ufea = tensor.to_numpy(user_fea)
-        sfea = tensor.to_numpy(shop_fea)
+        if type(user_fea) == tensor.Tensor:
+            ufea = tensor.to_numpy(user_fea)
+        if type(shop_fea) == tensor.Tensor:
+            sfea = tensor.to_numpy(shop_fea)
         if is_train:
             self.dev = user_fea.device
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
@@ -294,7 +308,6 @@ class YNet(object):
         return prec, sorted_idx
 
     def match(self, query_fea, query_id, db_fea, db_id, topk=100):
-        t = time.time()
         dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
         # logger.info('distance computation time = %f' % (time.time() - t))
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
@@ -358,38 +371,37 @@ class YNIN(YNet):
         shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
-#        shop.append(Slice('shop-slice', 0, [batchsize], input_sample_shape=shop[-1].get_output_sample_shape()))
 
         return shared, user, shop
 
-    def forward(self, is_train, data, to_loss=True):
-        imgs, pids = data
+    def put_input_to_gpu(self, imgs):
         x = tensor.from_numpy(imgs)
-        x.to_device(self.device)
+        x.to_device(self.dev)
         if self.debug:
             print '------------forward------------'
             print('%30s = %2.8f' % ('data', x.l1()))
+        return x
 
-        for lyr in self.shared:
+    def forward_layers(self, is_train, x, layers):
+        for lyr in layers:
             x = lyr.forward(is_train, x)
             if self.debug:
                 if type(x) == tensor.Tensor:
                     print('%30s = %2.8f' % (lyr.name, x.l1()))
                 else:
                     print('%30s = %2.8f, %2.8f' % (lyr.name, x[0].l1(), x[1].l1()))
-        a, b = x
-        for lyr in self.user:
-            a = lyr.forward(is_train, a)
-            if self.debug:
-                print('%30s = %2.8f' % (lyr.name, a.l1()))
-        for lyr in self.shop:
-            b = lyr.forward(is_train, b)
-            if self.debug:
-                print('%30s = %2.8f' % (lyr.name, b.l1()))
-        if to_loss:
-            return self.loss.forward(is_train, a, b, pids)
-        else:
-            return a, b, pids
+        return x
+
+    def forward(self, is_train, data, to_loss=True):
+        t1 = time.time()
+        imgs, pids = data.next()
+        t2 = time.time()
+        x = self.put_input_to_gpu(imgs)
+        a, b = self.forward_layers(is_train, x, self.shared)
+        a = self.forward_layers(is_train, a, self.user)
+        b = self.forward_layers(is_train, b, self.shop)
+        loss = self.loss.forward(is_train, a, b, pids)
+        return loss, t2 - t1, time.time() -t2
 
     def backward(self):
         if self.debug:
@@ -420,34 +432,66 @@ class YNIN(YNet):
         return param_grads[::-1]
 
     def bprop(self, data):
-        t1 = time.time()
-        dat = data.next()
-        t2 = time.time()
-        loss = self.forward(True, dat)
+        loss, t1, t2 = self.forward(True, data)
+        tic = time.time()
         ret = self.backward()
-        t3 = time.time()
-        return ret, loss, [t2-t1, t3-t2]
-
-    def forward_layers(self, x, layers):
-        x = tensor.from_numpy(x)
-        x.to_device(self.device)
-        if self.debug:
-            print '------------forward------------'
-            print('%30s = %2.8f' % ('data', x.l1()))
-
-        for lyr in layers:
-            x = lyr.forward(False, x)
-            if self.debug:
-                if type(x) == tensor.Tensor:
-                    print('%30s = %2.8f' % (lyr.name, x.l1()))
-        return tensor.to_numpy(x)
+        return ret, loss, [t1, t2 + time.time() - tic]
 
     def extract_query_feature_on_batch(self, data):
         img, pid = data.next()
-        fea = self.forward_layers(img, self.shared[0:-1] + self.user)
-        return fea, pid
+        img = self.put_input_to_gpu(img)
+        fea = self.forward_layers(False, img, self.shared[0:-1] + self.user)
+        return tensor.to_numpy(fea), pid
 
     def extract_db_feature_on_batch(self, data):
         img, pid = data.next()
-        fea = self.forward_layers(img, self.shared[0:-1] + self.shop)
+        img = self.put_input_to_gpu(img)
+        fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop)
+        return tensor.to_numpy(fea), pid
+
+
+class TagNIN(YNet):
+    def create_net(self, name, img_size, batchsize=32, ntags=8):
+        shared = []
+
+        self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
+        shared.append(MaxPooling2D('p1', 3, 2, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        self.add_conv(shared, 'conv2', [256, 256, 256], 5, 1, 2)
+        shared.append(MaxPooling2D('p2', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        self.add_conv(shared, 'conv3', [384, 384, 384], 3, 1, 1)
+        shared.append(MaxPooling2D('p3', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
+        shared.append(slice_layer)
+
+        user = []
+        self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+
+        shop = []
+        self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), ntags]))
+        return shared, user, shop
+
+    def forward(self, is_train, data, to_loss=True):
+        t1 = time.time()
+        imgs, pids = data.next()
+        t2 = time.time()
+        imgs = self.put_input_to_gpu(imgs)
+        a, b = self.forward_layers(is_train, imgs, self.shared)
+        a = self.forward_layers(is_train, a, self.user)
+        b = self.forward_layers(is_train, a, self.shop[0:-1])
+        b = self.shop[-1].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+        loss = self.loss.forward(is_train, a, b, pids)
+        return loss, t2 - t1, time.time() - t2
+
+    def extract_db_feature_on_batch(self, data):
+        img, pid = data.next()
+        img = self.put_input_to_gpu(img)
+        fea = self.forward_layers(img, self.shared[0:-1] + self.shop[0:-1])
+        fea = self.shop[-1].forward(False, [fea, data.tag2vec(pid)])
         return fea, pid
