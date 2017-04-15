@@ -65,14 +65,15 @@ class Softmax(layer.Layer):
         self.a = None
 
     def forward(self, is_train, x):
-        a = np.exp(x)
-        a -= np.max(a, axis=1)
+        assert len(x.shape) == 2, 'softmax input should be 2d-array'
+        a = x - np.max(x, axis=1)[:, np.newaxis]
+        a = np.exp(a)
         a /= np.sum(a, axis=1)[:, np.newaxis]
         if is_train:
             self.a = a
         return a
 
-    def backward(self, dy):
+    def backward(self, is_train, dy):
         c = np.einsum('ij, ij->i', dy, self.a)
         return self.a * (dy - c[:, np.newaxis]), []
 
@@ -80,15 +81,20 @@ class Softmax(layer.Layer):
 class Aggregation(layer.Layer):
     def __init__(self, name, input_sample_shape):
         super(Aggregation, self).__init__(name)
+        self.c, h, w = input_sample_shape[0]
+        assert h * w == input_sample_shape[1][0], \
+                '# locations not match: %d vs %d' % (h * w, input_sample_shape[1][0])
         self.x = None
 
     def forward(self, is_train, xs):
+        x = xs[0].reshape((xs[0].shape[0], self.c, -1))
+        w = xs[1]
         if is_train:
-            self.x = xs[0]
-            self.w = xs[1]
-        return np.einsum('ijk, ik -> ij', xs[0], xs[1])
+            self.x = x
+            self.w = w
+        return np.einsum('ijk, ik -> ij', x, w)
 
-    def backward(self, dy):
+    def backward(self, is_train, dy):
         dw = np.einsum('ij, ijk -> ik', dy, self.x)
         dx = np.einsum('ij, ik -> ijk', dy, self.w)
         return [dx, dw], []
@@ -109,11 +115,11 @@ class TagEmbedding(layer.Layer):
     def forward(self, is_train, x):
         if is_train:
             self.x = x
-        W = self.to_numpy(self.W)
+        W = tensor.to_numpy(self.W)
         # b = self.to_numpy(self.b)
         return np.dot(x, W)  # + b[np.newaxis, :]
 
-    def backward(self, dy):
+    def backward(self, is_train, dy):
         dw = np.einsum('id, ij -> dj', self.x, dy)
         # db = np.sum(dt, axis=0)
         return [], [tensor.from_numpy(dw)]
@@ -122,38 +128,40 @@ class TagEmbedding(layer.Layer):
 class Attention(layer.Layer):
     def __init__(self, name, input_sample_shape):
         super(Attention, self).__init__(name)
-        self.c, self.h, self.w = input_sample_shape
-        self.l = self.h * self.w
+        self.c, self.h, self.w = input_sample_shape[0]
+        assert self.c == input_sample_shape[1][0], \
+                '# channels != tag embed dim: %d vs %d' % (self.c, input_sample_shape[1][0])
         self.x = None
         self.t = None
 
     def forward(self, is_train, xs):
-        x = xs[0].reshape((-1, self.c, self.l))
+        x = xs[0].reshape((xs[0].shape[0], self.c, -1))
         t = xs[1]
         if is_train:
             self.x = x
             self.t = xs[1]
         return np.einsum('ijk, ij->ik', x, t)
 
-    def backward(self, dy):
+    def backward(self, is_train, dy):
         dt = np.einsum('ik, ijk -> ij', dy, self.x)
         dx = np.einsum('ij, ik -> ijk', self.t, dy)
         return [dx, dt], []
 
 
 class TagAttention(layer.Layer):
-    def __init__(self, name, input_sample_shape):
+    def __init__(self, name, input_sample_shape, debug=False):
         super(TagAttention, self).__init__(name)
-        c, h, w = input_sample_shape[0]
-        self.img_shape = input_sample_shape[0]
-        self.embed = TagEmbedding('%s_embed' % name, c, input_sample_shape[1])
-        self.attention = Attention('%s_attention' % name, input_sample_shape[0])
-        self.softmax = Softmax('%s_softmax' % name, (h*w,))
-        self.agg = Aggregation('%s_agg' % name, [self.img_shape, (h*w,)])
+        self.c, self.h, self.w = input_sample_shape[0]
+        l = self.h * self.w
+        self.embed = TagEmbedding('%s_embed' % name, self.c, input_sample_shape[1])
+        self.attention = Attention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
+        self.softmax = Softmax('%s_softmax' % name, (l,))
+        self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
         self.dev = None
+        self.debug= debug
 
     def get_output_sample_shape(self):
-        return self.img_shape
+        return  (self.c, )
 
     def param_names(self):
         return self.embed.param_names()
@@ -161,22 +169,35 @@ class TagAttention(layer.Layer):
     def param_values(self):
         return self.embed.param_values()
 
+    def display(self, name, val):
+        if self.debug:
+            print('%30s = %2.8f' % (name, np.average(np.abs(val))))
+
     def forward(self, is_train, x):
         if is_train:
             self.dev = x[0].device
-        img = tensor.from_numpy(x[0])
+        img = tensor.to_numpy(x[0])
         t = self.embed.forward(is_train, x[1])
+        self.display(self.embed.name, t)
         w = self.attention.forward(is_train, [img, t])
+        self.display(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
+        self.display(self.softmax.name, w)
         y = self.agg.forward(is_train, [img, w])
-        return y
+        self.display(self.agg.name, y)
+        return tensor.from_numpy(y)
 
-    def backward(self, dy):
-        [dx1, dw], _ = self.agg.backward(dy)
-        dw = self.softmax.backward(dw)
-        [dx2, dt], _ = self.attention.backward(dw)
-        _, dW = self.embed.backward(dt)
-        dx = tensor.from_numpy(dx1 + dx2)
+    def backward(self, is_train, dy):
+        dy = tensor.to_numpy(dy)
+        [dx1, dw], _ = self.agg.backward(is_train, dy)
+        self.display(self.agg.name, dx1)
+        dw, _ = self.softmax.backward(is_train, dw)
+        self.display(self.softmax.name, dw)
+        [dx2, dt], _ = self.attention.backward(is_train, dw)
+        self.display(self.attention.name, dx2)
+        _, dW = self.embed.backward(is_train, dt)
+        dx = dx1 + dx2
+        dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
         dx.to_device(self.dev)
         return dx, dW
 
@@ -207,7 +228,8 @@ class TripletLoss(loss.Loss):
         self.nshop = nshop
         self.guser = None
         self.gshop = None
-        self.dev = None
+        self.deva = None
+        self.devb = None
 
     def forward(self, is_train, user_fea, shop_fea, pids):
         if type(user_fea) == tensor.Tensor:
@@ -215,7 +237,8 @@ class TripletLoss(loss.Loss):
         if type(shop_fea) == tensor.Tensor:
             sfea = tensor.to_numpy(shop_fea)
         if is_train:
-            self.dev = user_fea.device
+            self.deva = user_fea.device
+            self.devb = shop_fea.device
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
             self.gshop = np.zeros(sfea.shape, dtype=np.float32)
         ret = None
@@ -235,8 +258,8 @@ class TripletLoss(loss.Loss):
     def backward(self):
         tguser = tensor.from_numpy(self.guser/self.nshift)
         tgshop = tensor.from_numpy(self.gshop/self.nshift)
-        tguser.to_device(self.dev)
-        tgshop.to_device(self.dev)
+        tguser.to_device(self.deva)
+        tgshop.to_device(self.devb)
         return tguser, tgshop
 
 
@@ -395,7 +418,7 @@ class YNet(object):
         data.start(nuser, nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
         for b in bar:
-            l = self.forward(False, data.next())
+            l, _, _ = self.forward(False, data)
             if loss is None:
                 loss = np.zeros(l.shape)
             loss += l
@@ -481,7 +504,7 @@ class YNIN(YNet):
 
     def put_input_to_gpu(self, imgs):
         x = tensor.from_numpy(imgs)
-        x.to_device(self.dev)
+        x.to_device(self.device)
         if self.debug:
             print '------------forward------------'
             print('%30s = %2.8f' % ('data', x.l1()))
@@ -555,7 +578,7 @@ class YNIN(YNet):
         return tensor.to_numpy(fea), pid
 
 
-class TagNIN(YNet):
+class TagNIN(YNIN):
     def create_net(self, name, img_size, batchsize=32, ntags=20):
         shared = []
 
@@ -578,8 +601,8 @@ class TagNIN(YNet):
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
-        shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
-        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), ntags]))
+        # shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 
@@ -590,14 +613,16 @@ class TagNIN(YNet):
         imgs = self.put_input_to_gpu(imgs)
         a, b = self.forward_layers(is_train, imgs, self.shared)
         a = self.forward_layers(is_train, a, self.user)
-        b = self.forward_layers(is_train, a, self.shop[0:-1])
-        b = self.shop[-1].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+        b = self.forward_layers(is_train, b, self.shop[0:-2])
+        b = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+        b = self.forward_layers(is_train, b, self.shop[-1:])
         loss = self.loss.forward(is_train, a, b, pids)
         return loss, t2 - t1, time.time() - t2
 
     def extract_db_feature_on_batch(self, data):
         img, pid = data.next()
         img = self.put_input_to_gpu(img)
-        fea = self.forward_layers(img, self.shared[0:-1] + self.shop[0:-1])
-        fea = self.shop[-1].forward(False, [fea, data.tag2vec(pid)])
-        return fea, pid
+        fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop[0:-2])
+        fea = self.shop[-2].forward(False, [fea, data.tag2vec(pid)])
+        fea = self.forward_layers(False, fea, self.shop[-1:])
+        return tensor.to_numpy(fea), pid

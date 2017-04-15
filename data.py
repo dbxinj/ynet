@@ -62,19 +62,6 @@ def stat_list(lists):
     return min_len, total_len, total_len/len(lists)
 
 
-def load_pair(obj, nuser, nshop, proc):
-    obj.load_pair(poc, nuser, nshop)
-
-
-def load_user(obj, proc):
-    obj.load_user(poc)
-
-
-def load_shop(obj, proc):
-    obj.load_shop(poc)
-
-
-
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
             capacity=10, delimiter=' ', nproc=1, meanstd=None, num_category=20):
@@ -114,7 +101,7 @@ class DataIter(object):
                             self.pid2userids[pid].append(len(self.img_path) - 1)
                         else:
                             self.pid2shopids[pid].append(len(self.img_path) - 1)
-                        cat = int(rec[2])
+                        cat = int(rec[3])
                         assert self.pid2cat[pid] == -1 or self.pid2cat[pid] == cat, \
                             'img %s, category is not consistent; was set to %d' % (rec[0], self.pid2cat[pid])
                         self.pid2cat[pid] = cat

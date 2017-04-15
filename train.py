@@ -75,7 +75,7 @@ def create_datasets(args, with_train, with_val, with_test=False):
     meanstd = np.load(os.path.join(data_dir, 'mean-std.npy'))
     img_list_file = os.path.join(data_dir, 'image.txt')
     product_list_file = os.path.join(data_dir, 'product.txt')
-    products = data.read_products(product_list_file) #[0:2000]
+    products = data.read_products(product_list_file) #[0:5000]
     num_products = len(products)
     num_train_products = int(num_products * args.train_split)
     num_val_products = (num_products - num_train_products) // 2
@@ -137,12 +137,13 @@ if __name__ == '__main__':
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)
     dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
+    net = model.TagNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
             batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
-    for i in range(20):
+    for i in range(1):
         args = gen_cfg(args)
         logging.info('\n\n-----------------------%d trail----------------------------' % i)
         args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+        # args.param_dir = os.path.join('param', 'darn')
         os.makedirs(args.param_dir)
         net.init_params(args.param_path)
         train(args, net, train_data, val_data, test_data)
