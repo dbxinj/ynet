@@ -59,17 +59,112 @@ class L2Norm(layer.Layer):
         return dx, []
 
 
-class TagAttention(tensor.Layer):
+class Softmax(tensor.Layer):
     def __init__(self, name, input_sample_shape):
-        c, h, w = input_sample_shape[0]
-        dim = input_sample_shape[1]
-        self.W=tensor.Tensor((dim, c))
+        super(Softmax, self).__init__(name, input_sample_shape)
+        self.a = None
+
+    def forward(self, is_train, x):
+        a = np.exp(x)
+        a -= np.max(a, axis=1)
+        self.a = a / np.sum(a, axis=1)[:, np.newaxis]
+        return self.a
+
+    def backward(self, dy):
+        c = np.einsum('ij, ij->i', dy, self.a)
+        return self.a * (dy - c[:, np.newaxis])
+
+
+class WeightedPooling(tensor.Layer):
+    def __init__(self, name, input_sample_shape):
+        super(WeightedPooling, self).__init__(name, input_sample_shape)
+        self.x = None
 
     def forward(self, is_train, xs):
-        pass
+        if is_train:
+            self.x = xs[0]
+            self.w = xs[1]
+        return np.einsum('ijk, ik -> ij', xs[0], xs[1])
 
-    def backward(self):
-        pass
+    def backward(self, dy):
+        dw = np.einsum('ij, ijk -> ik', dy, self.x)
+        dx = np.einsum('ij, ik -> ijk', dy, self.w)
+        return [dx, dw], []
+
+
+class TagEmbedding(tensor.Layer):
+    def __init__(self, name, num_output, input_sample_shape):
+        super(TagEmbedding, self).__init__(name, input_sample_shape)
+        self.W = tensor.Tensor((input_sample_shape[0], num_output))
+
+    def param_names(self):
+        return ['%s_weight' % self.name]
+
+    def param_values(self):
+        return [self.W]
+
+    def forward(self, is_train, x):
+        if is_train:
+            self.x = x
+        W = self.to_numpy(self.W)
+        # b = self.to_numpy(self.b)
+        return np.dot(x, W)  # + b[np.newaxis, :]
+
+    def backward(self, dy):
+        dw = np.einsum('id, ij -> dj', self.x, dy)
+        # db = np.sum(dt, axis=0)
+        return [], [tensor.from_numpy(dw)]
+
+
+class Attention(tensor.Layer):
+    def __init__(self, name, input_sample_shape):
+        self.c, self.h, self.w = input_sample_shape
+        self.l = self.h * self.w
+        self.x = None
+        self.t = None
+
+    def forward(self, is_train, xs):
+        x = xs[0].reshape((-1, self.c, self.l))
+        t = xs[1]
+        if is_train:
+            self.x = x
+            self.dev = xs[0].device
+            self.t = xs[1]
+        return np.einsum('ijk, ij->ik', x, t)
+
+    def backward(self, dy):
+        dt = np.einsum('ik, ijk -> ij', dy, self.x)
+        dx = np.einsum('ij, ik -> ijk', self.t, dy)
+        return [dx, dt], []
+
+
+class TagAttention(layer.Layer):
+    def __init__(self, name, input_sample_shape):
+        c, h, w = input_sample_shape[0]
+        self.embed = TagEmbedding('%s_embed' % name, c, input_sample_shape)
+        self.attention = Attention('%s_attention' % name, input_sample_shape[0])
+        self.softmax = Softmax('%s_softmax' % name, (h*w,))
+        self.pooling = WeightedPooling('%s_pool' % name, [input_sample_shape[0], (h*w,)])
+        self.dev = None
+
+    def forward(self, is_train, x):
+        if is_train:
+            self.dev = x[0].device
+        img = tensor.from_numpy(x[0])
+        t = self.embed.forward(is_train, x[1])
+        w = self.attention.forward(is_train, [img, t])
+        w = self.softmax.forward(is_train, w)
+        y = self.pooling.forward(is_train, [img, w])
+        return y
+
+    def backward(self, dy):
+        [dx1, dw], _ = self.pooling.backward(dy)
+        dw = self.softmax.backward(dw)
+        [dx2, dt], _ = self.attention.backward(dw)
+        _, dW = self.embed.backward(dt)
+        dx = tensor.from_numpy(dx1 + dx2)
+        dx.to_device(self.dev)
+        return dx
 
 
 def l1(ary):
