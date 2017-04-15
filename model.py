@@ -59,25 +59,27 @@ class L2Norm(layer.Layer):
         return dx, []
 
 
-class Softmax(tensor.Layer):
+class Softmax(layer.Layer):
     def __init__(self, name, input_sample_shape):
-        super(Softmax, self).__init__(name, input_sample_shape)
+        super(Softmax, self).__init__(name)
         self.a = None
 
     def forward(self, is_train, x):
         a = np.exp(x)
         a -= np.max(a, axis=1)
-        self.a = a / np.sum(a, axis=1)[:, np.newaxis]
-        return self.a
+        a /= np.sum(a, axis=1)[:, np.newaxis]
+        if is_train:
+            self.a = a
+        return a
 
     def backward(self, dy):
         c = np.einsum('ij, ij->i', dy, self.a)
-        return self.a * (dy - c[:, np.newaxis])
+        return self.a * (dy - c[:, np.newaxis]), []
 
 
-class WeightedPooling(tensor.Layer):
+class Aggregation(layer.Layer):
     def __init__(self, name, input_sample_shape):
-        super(WeightedPooling, self).__init__(name, input_sample_shape)
+        super(Aggregation, self).__init__(name)
         self.x = None
 
     def forward(self, is_train, xs):
@@ -92,10 +94,11 @@ class WeightedPooling(tensor.Layer):
         return [dx, dw], []
 
 
-class TagEmbedding(tensor.Layer):
+class TagEmbedding(layer.Layer):
     def __init__(self, name, num_output, input_sample_shape):
-        super(TagEmbedding, self).__init__(name, input_sample_shape)
+        super(TagEmbedding, self).__init__(name)
         self.W = tensor.Tensor((input_sample_shape[0], num_output))
+        initializer.gaussian(self.W, input_sample_shape[0], num_output)
 
     def param_names(self):
         return ['%s_weight' % self.name]
@@ -116,8 +119,9 @@ class TagEmbedding(tensor.Layer):
         return [], [tensor.from_numpy(dw)]
 
 
-class Attention(tensor.Layer):
+class Attention(layer.Layer):
     def __init__(self, name, input_sample_shape):
+        super(Attention, self).__init__(name)
         self.c, self.h, self.w = input_sample_shape
         self.l = self.h * self.w
         self.x = None
@@ -128,7 +132,6 @@ class Attention(tensor.Layer):
         t = xs[1]
         if is_train:
             self.x = x
-            self.dev = xs[0].device
             self.t = xs[1]
         return np.einsum('ijk, ij->ik', x, t)
 
@@ -140,12 +143,23 @@ class Attention(tensor.Layer):
 
 class TagAttention(layer.Layer):
     def __init__(self, name, input_sample_shape):
+        super(TagAttention, self).__init__(name)
         c, h, w = input_sample_shape[0]
-        self.embed = TagEmbedding('%s_embed' % name, c, input_sample_shape)
+        self.img_shape = input_sample_shape[0]
+        self.embed = TagEmbedding('%s_embed' % name, c, input_sample_shape[1])
         self.attention = Attention('%s_attention' % name, input_sample_shape[0])
         self.softmax = Softmax('%s_softmax' % name, (h*w,))
-        self.pooling = WeightedPooling('%s_pool' % name, [input_sample_shape[0], (h*w,)])
+        self.agg = Aggregation('%s_agg' % name, [self.img_shape, (h*w,)])
         self.dev = None
+
+    def get_output_sample_shape(self):
+        return self.img_shape
+
+    def param_names(self):
+        return self.embed.param_names()
+
+    def param_values(self):
+        return self.embed.param_values()
 
     def forward(self, is_train, x):
         if is_train:
@@ -154,21 +168,17 @@ class TagAttention(layer.Layer):
         t = self.embed.forward(is_train, x[1])
         w = self.attention.forward(is_train, [img, t])
         w = self.softmax.forward(is_train, w)
-        y = self.pooling.forward(is_train, [img, w])
+        y = self.agg.forward(is_train, [img, w])
         return y
 
     def backward(self, dy):
-        [dx1, dw], _ = self.pooling.backward(dy)
+        [dx1, dw], _ = self.agg.backward(dy)
         dw = self.softmax.backward(dw)
         [dx2, dt], _ = self.attention.backward(dw)
         _, dW = self.embed.backward(dt)
         dx = tensor.from_numpy(dx1 + dx2)
         dx.to_device(self.dev)
-        return dx
-
-
-def l1(ary):
-    return np.average(ary)
+        return dx, dW
 
 
 def loss_bp(is_train, a1, a2, p, n, margin):
@@ -186,7 +196,7 @@ def loss_bp(is_train, a1, a2, p, n, margin):
         gp = d_ap * sign[:, np.newaxis] * (-2 / batchsize)
         gn = d_an * sign[:, np.newaxis] * (2 / batchsize)
         grads = [-gp, -gn, gp, gn]
-    return (np.array([l1(loss), l1(sign), l1(d1), l1(d2)]), grads)
+    return (np.array([loss.mean(), sign.mean(), d1.mean(), d2.mean()]), grads)
 
 
 class TripletLoss(loss.Loss):
@@ -546,7 +556,7 @@ class YNIN(YNet):
 
 
 class TagNIN(YNet):
-    def create_net(self, name, img_size, batchsize=32, ntags=8):
+    def create_net(self, name, img_size, batchsize=32, ntags=20):
         shared = []
 
         self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
@@ -570,6 +580,7 @@ class TagNIN(YNet):
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), ntags]))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 
     def forward(self, is_train, data, to_loss=True):

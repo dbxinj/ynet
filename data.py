@@ -3,7 +3,6 @@ import numpy as np
 import time
 import os
 import sys
-import functools
 from multiprocessing import Process, Queue # , Value
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_float
@@ -78,7 +77,8 @@ def load_shop(obj, proc):
 
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
-            capacity=10, delimiter=' ', nproc=1, meanstd=None):
+            capacity=10, delimiter=' ', nproc=1, meanstd=None, num_category=20):
+        self.num_category = num_category
         self.batchsize = batchsize  # num of products to process for training, num of images for val/test
         self.capacity = capacity
         self.proc = []
@@ -100,6 +100,7 @@ class DataIter(object):
         self.img_dir = img_dir
         self.img_size = img_size
         self.img_path = []
+        self.pid2cat = [-1] * len(products)
         self.pid2userids = [[] for _ in range(len(products))]
         self.pid2shopids = [[] for _ in range(len(products))]
         with open(image_file, 'r') as fd:
@@ -113,6 +114,11 @@ class DataIter(object):
                             self.pid2userids[pid].append(len(self.img_path) - 1)
                         else:
                             self.pid2shopids[pid].append(len(self.img_path) - 1)
+                        cat = int(rec[2])
+                        assert self.pid2cat[pid] == -1 or self.pid2cat[pid] == cat, \
+                            'img %s, category is not consistent; was set to %d' % (rec[0], self.pid2cat[pid])
+                        self.pid2cat[pid] = cat
+
         self.min_user_per_prod, self.num_user, avg_num = stat_list(self.pid2userids)
         logger.info('min street imgs per product = %d, avg = %d, total imgs = %d'
                 % (self.min_user_per_prod, avg_num, self.num_user))
@@ -207,9 +213,10 @@ class DataIter(object):
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary.transpose(2, 0, 1)
 
-    def tag2vec(self, tags):
-        vec = np.zeros((self.tag_dim,), dtype=np.float32)
-        vec[tags] = 1.0
+    def tag2vec(self, pids):
+        vec = np.zeros((len(pids), self.num_category), dtype=np.float32)
+        for i, pid in enumerate(pids):
+            vec[i, self.pid2cat[pid]] = 1
         return vec
 
     def get_batch_range(self, nbatches, proc):
