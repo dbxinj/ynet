@@ -44,8 +44,9 @@ def train(cfg, net, train_data, val_data, test_data=None):
         print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
         if np.any(np.isnan(val_loss)) or np.any(np.isinf(val_loss)):
             return
+
         if epoch % cfg.search_freq == 0 and test_data is not None:
-            perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
+            perf = net.retrieval(test_data, None, cfg.topk)
             precision.append(perf)
             logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
             print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
@@ -124,6 +125,7 @@ if __name__ == '__main__':
     parser.add_argument("--data_dir", default='data')
     parser.add_argument("--img_dir", default='../darn/')
     parser.add_argument("--param_path", help='param pickle file path')
+    parser.add_argument("--candidate_path", help='results from initial search')
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nproc", type=int, default=1, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
@@ -133,12 +135,23 @@ if __name__ == '__main__':
     parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
     parser.add_argument("--search_freq", type=int, default=1, help='frequency of validation on retrieval')
     parser.add_argument("--topk", type=int, default=100, help='top results')
+    parser.add_argument("--net", default='tagnin', choices=['tagnin', 'ctxnin'])
+    parser.add_argument("--nshift", type=int, default=1)
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)
     dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.TagNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
-            batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
+    if args.net == 'tagnini':
+        net = model.TagNIN('TagNIN', model.TripletLoss(args.margin, args.nshift), dev, img_size=args.img_size,
+                batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
+    elif args.net == 'ctxnin':
+        if args.candidate_path is not None:
+            if not os.path.exists(args.candidate_path):
+                net = model.TagNIN('TagNIN', model.TripletLoss(args.margin, args.nshift), dev, img_size=args.img_size,
+                    batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
+                net.retrieval(test_data, args.candidate_path, topk=256)
+        net = model.ContextNIN('CtxNIN', model.QuadLoss(args.margin, args.nshift), dev, img_size=args.img_size,
+                batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
     for i in range(1):
         args = gen_cfg(args)
         logging.info('\n\n-----------------------%d trail----------------------------' % i)

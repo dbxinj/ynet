@@ -28,6 +28,17 @@ def compute_precision(target):
     return prec
 
 
+def show_debuginfo(name, x):
+    if type(x) == tensor.Tensor:
+        print('%30s = %2.8f' % (name, x.l1()))
+    elif type(x) == np.ndarray:
+        print('%30s = %2.8f' % (name, np.average(np.abs(x))))
+    elif type(x[0]) == tensor.Tensor:
+        print('%30s = %2.8f, %2.8f' % (name, x[0].l1(), x[1].l1()))
+    else:
+        print('%30s = %2.8f, %2.8f' % (name, np.average(np.abs(x[0])), np.average(np.abs(x[1]))))
+
+
 class L2Norm(layer.Layer):
     def __init__(self, name, input_sample_shape, epsilon=1e-8):
         super(L2Norm, self).__init__(name)
@@ -57,6 +68,22 @@ class L2Norm(layer.Layer):
         self.y.mult_column(k)
         dx = dy - self.y
         dx.div_column(self.norm)
+        return dx, []
+
+
+class NpL2Norm(L2Norm.Layer):
+    def forward(self, is_train, x):
+        norm = np.sqrt(np.sum(x**2, axis=1) + self.epsilon)
+        self.y = x / norm[:, np.newaxis]
+        if is_train:
+            self.norm = norm
+        return self.y
+
+    def backward(self, is_train, dy):
+        # (b' - b * k) /norm, k = sum(dy * y)
+        k = np.sum(dy * self.y, axis=1)
+        dx = dy - self.y * k[:, np.newaxis]
+        dx /= self.norm[:, np.newaxis]
         return dx, []
 
 
@@ -231,28 +258,35 @@ class TagAttention(layer.Layer):
             self.dev = x[0].device
         img = tensor.to_numpy(x[0])
         t = self.embed.forward(is_train, x[1])
-        self.display(self.embed.name, t)
+        if self.debug:
+            show_debuginfo(self.embed.name, t)
         w = self.attention.forward(is_train, [img, t])
-        self.display(self.attention.name, w)
+        if self.debug:
+            show_debuginfo(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
-        self.display(self.softmax.name, w)
+        if self.debug:
+            show_debuginfo(self.softmax.name, w)
         y = self.agg.forward(is_train, [img, w])
-        self.display(self.agg.name, y)
-        return tensor.from_numpy(y)
+        if self.debug:
+            show_debuginfo(self.agg.name, y)
+        return y
 
     def backward(self, is_train, dy):
-        dy = tensor.to_numpy(dy)
         [dx1, dw], _ = self.agg.backward(is_train, dy)
-        self.display(self.agg.name, dx1)
+        if self.debug:
+            show_debuginfo(self.agg.name, dx1)
         dw, _ = self.softmax.backward(is_train, dw)
-        self.display(self.softmax.name, dw)
+        if self.debug:
+            show_debuginfo(self.softmax.name, dw)
         [dx2, dt], _ = self.attention.backward(is_train, dw)
-        self.display(self.attention.name, dx2)
+        if self.debug:
+            show_debuginfo(self.attention.name, dx2)
         _, dW = self.embed.backward(is_train, dt)
         dx = dx1 + dx2
         dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
         dx.to_device(self.dev)
         return dx, dW
+
 
 class ContextAttention(layer.Layer):
     def __init__(self, name, input_sample_shape, debug=False):
@@ -264,7 +298,6 @@ class ContextAttention(layer.Layer):
         self.attention = ProductAttention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
-        self.dev = None
         self.debug= debug
 
     def get_output_sample_shape(self):
@@ -276,43 +309,31 @@ class ContextAttention(layer.Layer):
     def param_values(self):
         return self.attention.param_values()
 
-    def display(self, name, val):
-        if self.debug:
-            if type(val) == tensor.Tensor:
-                print('%30s = %2.8f' % (name, np.average(np.abs(val))))
-            else:
-                for v in val:
-                    print('%30s = %2.8f' % (name, np.average(np.abs(v))))
-
     def forward(self, is_train, x):
-        if type(x[0]) == tensor.Tensor:
-            img = tensor.to_numpy(x[0])
-            self.dev = x[0].device
-        else:
-            img = x[0]
-        if type(x[1]) == tensor.Tensor:
-            ctx = tensor.to_numpy(x[1])
-        else:
-            ctx = x[1]
+        img, ctx = x[0], x[1]
         w = self.attention.forward(is_train, [img, ctx])
-        self.display(self.attention.name, w)
+        if self.debug:
+            show_debuginfo(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
-        self.display(self.softmax.name, w)
+        if self.debug:
+            show_debuginfo(self.softmax.name, w)
         y = self.agg.forward(is_train, [img, w])
-        self.display(self.agg.name, y)
+        if self.debug:
+            show_debuginfo(self.agg.name, y)
         return tensor.from_numpy(y)
 
     def backward(self, is_train, dy):
-        dy = tensor.to_numpy(dy)
         [dx1, dw], _ = self.agg.backward(is_train, dy)
-        self.display(self.agg.name, dx1)
+        if self.debug:
+            show_debuginfo(self.agg.name, dx1)
         dw, _ = self.softmax.backward(is_train, dw)
-        self.display(self.softmax.name, dw)
+        if self.debug:
+            show_debuginfo(self.softmax.name, dw)
         [dx2, dctx], dp = self.attention.backward(is_train, dw)
-        self.display(self.attention.name, [dx2, dctx])
+        if self.debug:
+            show_debuginfo(self.attention.name, [dx2, dctx])
         dx = dx1 + dx2
-        dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
-        dx.to_device(self.dev)
+        dx = dx.reshape((dx.shape[0], self.c, self.h, self.w))
         return [dx, dctx], dp
 
 
@@ -334,56 +355,28 @@ def loss_bp(is_train, a1, a2, p, n, margin):
     return (np.array([loss.mean(), sign.mean(), d1.mean(), d2.mean()]), grads)
 
 
-class QuadLoss(loss.Loss):
-    def __init__(self, margin=0.1, nshift=1, nuser=1, nshop=1):
-        self.margin = margin
-        self.nshift = nshift
-        self.guser = None
-
-    def forward(self, is_train, ufea, sfea, pids):
-        if is_train:
-            self.guser = np.zeros(ufea.shape, dtype=np.float32)
-        ret = None
-        bs = ufea.shape[0] / (self.nshift + 1)
-        for i in range(1, self.nshift+1):
-            s, e = i*bs, (i+1)*bs
-            loss, grads = loss_bp(is_train, ufea[0:bs], ufea[s: e], sfea[0:bs], sfea[s:e], self.margin)
-            if is_train:
-                self.guser[0:bs] += grads[0]
-                self.guser[s:e] += grads[1]
-            if ret is None:
-                ret = np.zeros(loss.shape)
-            ret += loss
-        return ret/self.nshift
-
-    def backward(self):
-        return self.guser/self.nshift, _
-
-
 class TripletLoss(loss.Loss):
-    def __init__(self, margin=0.1, nshift=1, nuser=1, nshop=1):
+    def __init__(self, margin=0.1, nshift=1):
         self.margin = margin
         self.nshift = nshift
-        self.nuser = nuser
-        self.nshop = nshop
         self.guser = None
         self.gshop = None
         self.deva = None
         self.devb = None
 
-    def forward(self, is_train, user_fea, shop_fea, pids):
-        if type(user_fea) == tensor.Tensor:
-            ufea = tensor.to_numpy(user_fea)
-        if type(shop_fea) == tensor.Tensor:
-            sfea = tensor.to_numpy(shop_fea)
+    def forward(self, is_train, ufea, sfea, pids):
+        if type(ufea) == tensor.Tensor:
+            ufea = tensor.to_numpy(ufea)
+            self.deva = ufea.device
+        if type(sfea) == tensor.Tensor:
+            sfea = tensor.to_numpy(sfea)
+            self.devb = sfea.device
         if is_train:
-            self.deva = user_fea.device
-            self.devb = shop_fea.device
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
             self.gshop = np.zeros(sfea.shape, dtype=np.float32)
         ret = None
         for i in range(1, self.nshift+1):
-            offset = i * self.nshop
+            offset = i
             idx = range(offset, sfea.shape[0]) + range(0, offset)
             loss, grads = loss_bp(is_train, ufea, ufea, sfea, sfea[idx], self.margin)
             if is_train:
@@ -396,11 +389,47 @@ class TripletLoss(loss.Loss):
         return ret/self.nshift
 
     def backward(self):
-        tguser = tensor.from_numpy(self.guser/self.nshift)
-        tgshop = tensor.from_numpy(self.gshop/self.nshift)
-        tguser.to_device(self.deva)
-        tgshop.to_device(self.devb)
+        if self.deva is not None:
+            tguser = tensor.from_numpy(self.guser)
+            tguser.to_device(self.deva)
+        if self.devb is not None:
+            tgshop = tensor.from_numpy(self.gshop)
+            tgshop.to_device(self.devb)
+        tguser /= self.nshift
+        tgshop /= self.nshift
         return tguser, tgshop
+
+
+
+class QuadLoss(TripletLoss):
+    def __init__(self, margin=0.1, nshift=1):
+        self.margin = margin
+        self.nshift = nshift
+        self.guser = None
+        self.gshop = None
+
+    def forward(self, is_train, ufea, sfea, pids):
+        if is_train:
+            self.guser = np.zeros(ufea.shape, dtype=np.float32)
+            self.gshop = np.zeros(ufea.shape, dtype=np.float32)
+        ret = None
+        bs = ufea.shape[0] / (self.nshift + 1)
+        for i in range(1, self.nshift+1):
+            s, e = i*bs, (i+1)*bs
+            loss, grads = loss_bp(is_train, ufea[0:bs], ufea[s: e], sfea[0:bs], sfea[s:e], self.margin)
+            if is_train:
+                self.guser[0:bs] += grads[0]
+                self.guser[s:e] += grads[1]
+                self.gshop[0:bs] += grads[2]
+                self.gshop[s:e] += grads[3]
+            if ret is None:
+                ret = np.zeros(loss.shape)
+            ret += loss
+        return ret/self.nshift
+
+    def backward(self):
+        return self.guser/self.nshift, self.gshop/self.nshift
+
 
 
 class YNet(object):
@@ -572,10 +601,9 @@ class YNet(object):
         dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
         target, sorted_idx = self.match(dist, query_id, db_id, topk)
         prec = compute_precision(target)
-        # np.save('%s-dist' % result_path, topdist)
-        # np.save('%s-target' % result_path, target)
-        # np.savetxt('%s-precision.txt' % result_path, prec)
-        return prec, sorted_idx
+        if result_path is not None:
+            np.savez(result_path, db_fea=db_fea, db_id=db_id, target=target, sorted_idx=sorted_idx)
+        return prec
 
     def match(self, dist, query_id, db_id, topk=100):
         # logger.info('distance computation time = %f' % (time.time() - t))
@@ -654,10 +682,7 @@ class YNIN(YNet):
         for lyr in layers:
             x = lyr.forward(is_train, x)
             if self.debug:
-                if type(x) == tensor.Tensor:
-                    print('%30s = %2.8f' % (lyr.name, x.l1()))
-                else:
-                    print('%30s = %2.8f, %2.8f' % (lyr.name, x[0].l1(), x[1].l1()))
+                self.show_debuginfo(lyr.name, x)
         return x
 
     def forward(self, is_train, data):
@@ -675,11 +700,7 @@ class YNIN(YNet):
         for lyr in layers:
             dx, dp = lyr.backward(True, dy)
             if self.debug:
-                if type(dx) == tensor.Tensor:
-                    print('%30s = %2.8f' % (lyr.name, dx.l1()))
-                else:
-                    for x in dx:
-                        print('%30s = %2.8f' % (lyr.name, x.l1()))
+                self.show_debuginfo(lyr.name, dx)
             if dp is not None:
                 dparam.extend(dp[::-1])
 
@@ -737,7 +758,7 @@ class TagNIN(YNIN):
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         # shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
-        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(NpL2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 
     def forward(self, is_train, data):
@@ -799,13 +820,13 @@ class ContextNIN(TagNIN):
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         # shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
-        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(NpL2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
         user = []
         self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
         # user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(ContextAttention('street-cxt', input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()], debug=self.debug))
-        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(NpL2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         return shared, user, shop
 
@@ -818,13 +839,12 @@ class ContextNIN(TagNIN):
         a, b = self.forward_layers(is_train, imgs, self.shared)
 
         b = self.forward_layers(is_train, b, self.shop[0:-2])
-        b = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
-        ctx = tensor.to_numpy(b)
-        normb = tensor.to_numpy(self.forward_layers(is_train, b, self.shop[-1:]))
+        ctx = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+        normb = self.forward_layers(is_train, b, self.shop[-1:])
 
         a = self.forward_layers(is_train, a, self.user[0:-2])
         a = tensor.to_numpy(a)
-        a = np.repeat(a, self.nshift, axis=0)
+        a = np.tile(a, [self.nshift, 1, 1, 1])
         shifted_ctx = np.empty((a.shape[0], ctx.shape[1]))
         shifted_normb = np.empty(shifted_ctx.shape)
         s = ctx.shape[0]
@@ -835,7 +855,7 @@ class ContextNIN(TagNIN):
 
         a = self.forward_layers(is_train, [a, shifted_ctx], self.user[-2:])
 
-        loss = self.loss.forward(is_train, tensor.to_numpy(a), shifted_normb, pids)
+        loss = self.loss.forward(is_train, a, shifted_normb, pids)
         return loss, t2 - t1, time.time() - t2
 
     def backward(self):
@@ -845,13 +865,14 @@ class ContextNIN(TagNIN):
         dp_user = []
         duser, _ = self.loss.backward()
         # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
-        dshifted_user, _ = self.backward_layers(tensor.from_numpy(duser), self.user[-1:-3:-1], dp_user)
+        dshifted_user, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
         s = dshifted_user.shape
         s[0] /= self.nshift + 1
         duser = np.zeros(s)
         for i in range(self.nshift + 1):
             duser += dshifted_user[i * s[0]: (i+1) * s[0]]
         duser = tensor.to_numpy(duser)
+        duser.to_device(self.device)
         # dshop = dshop1 + dshop2
         # dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
         duser = self.backward_layers(duser, self.user[-3::-1], dp_user)
@@ -863,13 +884,14 @@ class ContextNIN(TagNIN):
         fea = query_fea.reshape((1, query_fea.shape[0], query_fea.shape[1], query_fea.shape[2]))
         fea = self.put_input_to_gpu(fea)
         fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
+        fea = np.tile(tensor.to_numpy(fea), [db_fea.shape[0], 1])
         fea = self.forward_layers(False, [fea, db_fea], self.user[-2:])
         dist = np.sum((fea - db_fea) ** 2, axis=1)
         return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
 
     def retrieval(self, data, result_path, topk=100):
-        sorted_idx, db_fea, db_pid = np.load(os.path.join(result_path,
-                                                          'init_search.npz'))
+        npfile = np.load(os.path.join(result_path, 'init_search.npz'))
+        sorted_idx, db_fea, db_pid = npfile['sorted_idx'], npfile['db_fea'], npfile['db_id']
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
         new_target = np.empty(sorted_idx.shape, dtype=np.bool)
@@ -885,4 +907,4 @@ class ContextNIN(TagNIN):
                 new_sorted_idx[qid] = sorted_idx[qid][s[0]]
         data.stop()
         prec = compute_precision(new_target)
-        return prec, new_sorted_idx
+        return prec
