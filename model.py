@@ -5,6 +5,7 @@ from singa import loss
 from singa import tensor
 import cPickle as pickle
 import logging
+import os
 
 import numpy as np
 from numpy.core.umath_tests import inner1d
@@ -125,9 +126,9 @@ class TagEmbedding(layer.Layer):
         return [], [tensor.from_numpy(dw)]
 
 
-class Attention(layer.Layer):
+class ProductAttention(layer.Layer):
     def __init__(self, name, input_sample_shape):
-        super(Attention, self).__init__(name)
+        super(ProductAttention, self).__init__(name)
         self.c, self.h, self.w = input_sample_shape[0]
         assert self.c == input_sample_shape[1][0], \
                 '# channels != tag embed dim: %d vs %d' % (self.c, input_sample_shape[1][0])
@@ -148,13 +149,65 @@ class Attention(layer.Layer):
         return [dx, dt], []
 
 
+class MLPAttention(layer.Layer):
+    def __init__(self, name, dim=128, input_sample_shape=None):
+        super(MLPAttention, self).__init__(name)
+        self.c, self.h, self.w = input_sample_shape[0]
+        assert self.c == input_sample_shape[1][0], \
+                '# channels != tag embed dim: %d vs %d' % (self.c, input_sample_shape[1][0])
+        self.h = tensor.Tensor((dim,))
+        self.U = tensor.Tensor((self.c, dim))
+        self.V = tensor.Tensor((self.c, dim))
+        initializer.gaussian(self.U, self.c, dim)
+        initializer.gaussian(self.V, self.c, dim)
+        initializer.gaussian(self.h, dim, 0)
+        self.x = None
+        self.t = None
+
+    def get_output_sample_shape(self):
+        return (self.h * self.w, )
+
+    def param_names(self):
+        return [self.name+'_U', self.name+'_V', self.name+'_h']
+
+    def param_values(self):
+        return [self.U, self.V, self.h]
+
+    def forward(self, is_train, xs):
+        self.npU = tensor.to_numpy(self.U)
+        self.npV = tensor.to_numpy(self.V)
+        self.nph = tensor.to_numpy(self.h)
+
+        x = xs[0].reshape((xs[0].shape[0], self.c, -1))
+        ctx = xs[1]
+        a1 = np.einsum('ncl, ck -> nkl', x, self.npU)
+        a2 = np.einsum('nc, ck -> nk', ctx, self.npV)
+        a = np.tanh(a1 + a2[:, : , np.newaxis])
+        if is_train:
+            self.x = x
+            self.ctx = ctx
+            self.a = a
+        return np.einsum('nkl, k->nl', a, self.nph)
+
+    def backward(self, is_train, dy):
+        dh = np.einsum('nl, nkl -> k', dy, self.a)
+        da = np.einsum('nl, k -> nkl', dy, self.nph)
+        da *= 1 - (self.a**2)
+        dU = np.einsum('nkl, ncl -> ck', da, self.x)
+        dx = np.einsum('nkl, ck -> ncl', da, self.npU)
+        da = np.einsum('nkl->nk', da)
+        dctx = np.einsum('nk, ck ->nc', da, self.npV)
+        dV = np.einsum('nk, nc ->ck', da, self.ctx)
+        return [dx, dctx], [tensor.from_numpy(d) for d in [dU, dV, dh]]
+
+
 class TagAttention(layer.Layer):
     def __init__(self, name, input_sample_shape, debug=False):
         super(TagAttention, self).__init__(name)
         self.c, self.h, self.w = input_sample_shape[0]
         l = self.h * self.w
         self.embed = TagEmbedding('%s_embed' % name, self.c, input_sample_shape[1])
-        self.attention = Attention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
+        self.attention = ProductAttention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
         self.dev = None
@@ -200,6 +253,61 @@ class TagAttention(layer.Layer):
         dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
         dx.to_device(self.dev)
         return dx, dW
+
+class ContextAttention(layer.Layer):
+    def __init__(self, name, input_sample_shape, debug=False):
+        super(ContextAttention, self).__init__(name)
+        self.c, self.h, self.w = input_sample_shape[0]
+        l = self.h * self.w
+        assert self.c == input_sample_shape[1][0], \
+            'channel mis-match. street vs shop: %d, %d' % (self.c, input_sample_shape[1][0])
+        self.attention = ProductAttention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
+        self.softmax = Softmax('%s_softmax' % name, (l,))
+        self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
+        self.dev = None
+        self.debug= debug
+
+    def get_output_sample_shape(self):
+        return  (self.c, )
+
+    def param_names(self):
+        return self.attention.param_names()
+
+    def param_values(self):
+        return self.attention.param_values()
+
+    def display(self, name, val):
+        if self.debug:
+            if type(val) == tensor.Tensor:
+                print('%30s = %2.8f' % (name, np.average(np.abs(val))))
+            else:
+                for v in val:
+                    print('%30s = %2.8f' % (name, np.average(np.abs(v))))
+
+    def forward(self, is_train, x):
+        if is_train:
+            self.dev = x[0].device
+        img = tensor.to_numpy(x[0])
+        w = self.attention.forward(is_train, [img, x[1]])
+        self.display(self.attention.name, w)
+        w = self.softmax.forward(is_train, w)
+        self.display(self.softmax.name, w)
+        y = self.agg.forward(is_train, [img, w])
+        self.display(self.agg.name, y)
+        return tensor.from_numpy(y)
+
+    def backward(self, is_train, dy):
+        dy = tensor.to_numpy(dy)
+        [dx1, dw], _ = self.agg.backward(is_train, dy)
+        self.display(self.agg.name, dx1)
+        dw, _ = self.softmax.backward(is_train, dw)
+        self.display(self.softmax.name, dw)
+        [dx2, dctx], dp = self.attention.backward(is_train, dw)
+        self.display(self.attention.name, [dx2, dctx])
+        dx = dx1 + dx2
+        dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
+        dx.to_device(self.dev)
+        return [dx, dctx], dp
 
 
 def loss_bp(is_train, a1, a2, p, n, margin):
@@ -304,13 +412,13 @@ class YNet(object):
         for lyr in self.layers:
             lyr.to_device(dev)
 
-    def param_names(self):
+    def param_names(self, all=False):
         pname = []
         for lyr in self.layers:
             pname.extend(lyr.param_names())
         return pname
 
-    def param_values(self):
+    def param_values(self, all=False):
         pvals = []
         for lyr in self.layers:
             pvals.extend(lyr.param_values())
@@ -330,7 +438,7 @@ class YNet(object):
 
     def save(self, fpath):
         params = {}
-        for (name, val) in zip(self.param_names(), self.param_values()):
+        for (name, val) in zip(self.param_names(True), self.param_values(True)):
             val.to_host()
             params[name] = tensor.to_numpy(val)
             with open(fpath, 'wb') as fd:
@@ -339,7 +447,7 @@ class YNet(object):
     def load(self, fpath):
         with open(fpath, 'rb') as fd:
             params = pickle.load(fd)
-            for name, val in zip(self.param_names(), self.param_values()):
+            for name, val in zip(self.param_names(True), self.param_values(True)):
                 if name not in params:
                     print 'Param: %s missing in the checkpoint file' % name
                     continue
@@ -429,14 +537,15 @@ class YNet(object):
     def retrieval(self, data, result_path, topk=100):
         query_fea, query_id = self.extract_query_feature(data)
         db_fea, db_id = self.extract_db_feature(data)
-        prec, sorted_idx, target, topdist = self.match(query_fea, query_id, db_fea, db_id, topk)
+        dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
+        target, sorted_idx = self.match(dist, query_id, db_id, topk)
+        prec = compute_precision(target)
         # np.save('%s-dist' % result_path, topdist)
         # np.save('%s-target' % result_path, target)
         # np.savetxt('%s-precision.txt' % result_path, prec)
         return prec, sorted_idx
 
-    def match(self, query_fea, query_id, db_fea, db_id, topk=100):
-        dist=scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
+    def match(self, dist, query_id, db_id, topk=100):
         # logger.info('distance computation time = %f' % (time.time() - t))
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
         topdist = np.empty(sorted_idx.shape, dtype=np.float32)
@@ -447,8 +556,7 @@ class YNet(object):
         for i in range(len(query_id)):
             for j in range(topk):
                 target[i,j] = db_id[sorted_idx[i, j]] == query_id[i]
-        prec = compute_precision(target)
-        return prec, sorted_idx, target, topdist
+        return target, sorted_idx  # , topdist
 
     def rerank(self, data, result_path, candidate_size=1000, topk=100):
         pass
@@ -531,32 +639,26 @@ class YNIN(YNet):
         loss = self.loss.forward(is_train, a, b, pids)
         return loss, t2 - t1, time.time() -t2
 
+    def backward_layers(self, dy, layers, dparam):
+        for lyr in layers:
+            dx, dp = lyr.backward(True, dy)
+            if self.debug:
+                if type(dx) == tensor.Tensor:
+                    print('%30s = %2.8f' % (lyr.name, dx.l1()))
+                else:
+                    for x in dx:
+                        print('%30s = %2.8f' % (lyr.name, x.l1()))
+            if dp is not None:
+                dparam.extend(dp[::-1])
+
     def backward(self):
         if self.debug:
             print '------------backward------------'
         param_grads = []
         duser, dshop = self.loss.backward()
-        for lyr in self.shop[::-1]:
-            dshop, dp = lyr.backward(True, dshop)
-            if self.debug:
-                print('%30s = %2.8f' % (lyr.name, dshop.l1()))
-            if dp is not None:
-                param_grads.extend(dp[::-1])
-
-        for lyr in self.user[::-1]:
-            duser, dp = lyr.backward(True, duser)
-            if self.debug:
-                print('%30s = %2.8f' % (lyr.name, duser.l1()))
-            if dp is not None:
-                param_grads.extend(dp[::-1])
-
-        d = [duser, dshop]
-        for lyr in self.shared[::-1]:
-            d, dp = lyr.backward(True, d)
-            if self.debug:
-                print('%30s = %2.8f' % (lyr.name, d.l1()))
-            if dp is not None:
-                param_grads.extend(dp[::-1])
+        dshop = self.backward_layers(dshop, self.shop[::-1], param_grads)
+        duser = self.backward_layers(duser, self.user[::-1], param_grads)
+        self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
         return param_grads[::-1]
 
     def bprop(self, data):
@@ -626,3 +728,114 @@ class TagNIN(YNIN):
         fea = self.shop[-2].forward(False, [fea, data.tag2vec(pid)])
         fea = self.forward_layers(False, fea, self.shop[-1:])
         return tensor.to_numpy(fea), pid
+
+
+class ContextNIN(TagNIN):
+    def param_names(self, flag=False):
+        pname = []
+        layers = self.user
+        if flag:
+            layers = self.layers
+        for lyr in layers:
+            pname.extend(lyr.param_names())
+        return pname
+
+    def param_values(self, flag=False):
+        pvals = []
+        layers = self.user
+        if flag:
+            layers = self.layers
+        for lyr in layers:
+            pvals.extend(lyr.param_values())
+        return pvals
+
+    def create_net(self, name, img_size, batchsize=32, ntags=20):
+        shared = []
+
+        self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
+        shared.append(MaxPooling2D('p1', 3, 2, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        self.add_conv(shared, 'conv2', [256, 256, 256], 5, 1, 2)
+        shared.append(MaxPooling2D('p2', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        self.add_conv(shared, 'conv3', [384, 384, 384], 3, 1, 1)
+        shared.append(MaxPooling2D('p3', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
+        shared.append(slice_layer)
+
+        shop = []
+        self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        # shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+
+        user = []
+        self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        # user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(ContextAttention('street-cxt', input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()], debug=self.debug))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+
+        return shared, user, shop
+
+    def forward(self, is_train, data, to_loss=True):
+        t1 = time.time()
+        imgs, pids = data.next()
+        t2 = time.time()
+        imgs = self.put_input_to_gpu(imgs)
+
+        a, b = self.forward_layers(is_train, imgs, self.shared)
+
+        b = self.forward_layers(is_train, b, self.shop[0:-2])
+        b = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+
+        a = self.forward_layers(is_train, a, self.user[0:-2])
+        a = self.forward_layers(is_train, [a, b], self.user[-2:])
+
+        b = self.forward_layers(is_train, b, self.shop[-1:])
+        loss = self.loss.forward(is_train, a, b, pids)
+        return loss, t2 - t1, time.time() - t2
+
+    def backward(self):
+        if self.debug:
+            print '------------backward------------'
+        # dp_shop, dp_user = [], []
+        dp_user = []
+        duser, _ = self.loss.backward()
+        # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
+        duser, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
+        # dshop = dshop1 + dshop2
+        # dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
+        duser = self.backward_layers(duser, self.user[-3::-1], dp_user)
+        # param_grads = dp_shop + dp_user
+        # self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
+        return dp_user[::-1]
+
+    def search_on_batch(self, data, db_fea, db_pid, topk):
+        img, pid = data.next()
+        dist =np.zeros((img.shape[0], db_fea.shape[0]))
+        for i in range(img.shape[0]):
+            fea = np.repeat(img[0], db_fea.shape[1], axis=0)
+            fea = self.put_input_to_gpu(fea)
+            fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
+            fea = self.forward_layers(False, [fea, db_fea[i]], self.user[-2:])
+            dist[i, :] = np.sum((fea - db_fea[i]) ** 2, axis=1)
+        return self.match(dist, pid, db_pid, topk)
+
+
+    def retrieval(self, data, result_path, topk=100):
+        sorted_idx, db_fea, db_pid = np.load(os.path.join(result_path, 'init_search.npz'))
+        data.start(1, 0)
+        bar = trange(data.num_batches, desc='Query Image')
+        target = np.empty(sorted_idx.shape, dtype=np.bool)
+        new_sorted_idx = np.empty(sorted_idx.shape, dtype=np.int)
+        for i in bar:
+            db = np.empty((self.batchsize, sorted_idx.shape[1], db_fea.shape[1]))
+            pid = [None] * self.batchsize
+            for j in range(self.batchsize):
+                db[j,:, :] = db_fea[sorted_idx[i * self.batchsize + j]]
+                pid[j] = db_pid[sorted_idx[i * self.batchsize + j]]
+            t, idx = self.search_on_batch(data, db, pid, topk)
+            target[i * self.batchsize: (i + 1) * self.batchsize] = t
+            new_sorted_idx[i * self.batchsize: (i + 1) * self.batchsize] = idx
+        prec = compute_precision(target)
+        return prec, new_sorted_idx
