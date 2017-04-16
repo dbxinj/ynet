@@ -285,10 +285,16 @@ class ContextAttention(layer.Layer):
                     print('%30s = %2.8f' % (name, np.average(np.abs(v))))
 
     def forward(self, is_train, x):
-        if is_train:
+        if type(x[0]) == tensor.Tensor:
+            img = tensor.to_numpy(x[0])
             self.dev = x[0].device
-        img = tensor.to_numpy(x[0])
-        w = self.attention.forward(is_train, [img, x[1]])
+        else:
+            img = x[0]
+        if type(x[1]) == tensor.Tensor:
+            ctx = tensor.to_numpy(x[1])
+        else:
+            ctx = x[1]
+        w = self.attention.forward(is_train, [img, ctx])
         self.display(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
         self.display(self.softmax.name, w)
@@ -326,6 +332,32 @@ def loss_bp(is_train, a1, a2, p, n, margin):
         gn = d_an * sign[:, np.newaxis] * (2 / batchsize)
         grads = [-gp, -gn, gp, gn]
     return (np.array([loss.mean(), sign.mean(), d1.mean(), d2.mean()]), grads)
+
+
+class QuadLoss(loss.Loss):
+    def __init__(self, margin=0.1, nshift=1, nuser=1, nshop=1):
+        self.margin = margin
+        self.nshift = nshift
+        self.guser = None
+
+    def forward(self, is_train, ufea, sfea, pids):
+        if is_train:
+            self.guser = np.zeros(ufea.shape, dtype=np.float32)
+        ret = None
+        bs = ufea.shape[0] / (self.nshift + 1)
+        for i in range(1, self.nshift+1):
+            s, e = i*bs, (i+1)*bs
+            loss, grads = loss_bp(is_train, ufea[0:bs], ufea[s: e], sfea[0:bs], sfea[s:e], self.margin)
+            if is_train:
+                self.guser[0:bs] += grads[0]
+                self.guser[s:e] += grads[1]
+            if ret is None:
+                ret = np.zeros(loss.shape)
+            ret += loss
+        return ret/self.nshift
+
+    def backward(self):
+        return self.guser/self.nshift, _
 
 
 class TripletLoss(loss.Loss):
@@ -393,7 +425,7 @@ class YNet(object):
     def create_net(self, name, img_size, batchsize):
         pass
 
-    def forward(self, is_train, data, to_loss):
+    def forward(self, is_train, data):
         pass
 
     def backward(self):
@@ -628,7 +660,7 @@ class YNIN(YNet):
                     print('%30s = %2.8f, %2.8f' % (lyr.name, x[0].l1(), x[1].l1()))
         return x
 
-    def forward(self, is_train, data, to_loss=True):
+    def forward(self, is_train, data):
         t1 = time.time()
         imgs, pids = data.next()
         t2 = time.time()
@@ -708,7 +740,7 @@ class TagNIN(YNIN):
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 
-    def forward(self, is_train, data, to_loss=True):
+    def forward(self, is_train, data):
         t1 = time.time()
         imgs, pids = data.next()
         t2 = time.time()
@@ -777,7 +809,7 @@ class ContextNIN(TagNIN):
 
         return shared, user, shop
 
-    def forward(self, is_train, data, to_loss=True):
+    def forward(self, is_train, data):
         t1 = time.time()
         imgs, pids = data.next()
         t2 = time.time()
@@ -787,12 +819,23 @@ class ContextNIN(TagNIN):
 
         b = self.forward_layers(is_train, b, self.shop[0:-2])
         b = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
+        ctx = tensor.to_numpy(b)
+        normb = tensor.to_numpy(self.forward_layers(is_train, b, self.shop[-1:]))
 
         a = self.forward_layers(is_train, a, self.user[0:-2])
-        a = self.forward_layers(is_train, [a, b], self.user[-2:])
+        a = tensor.to_numpy(a)
+        a = np.repeat(a, self.nshift, axis=0)
+        shifted_ctx = np.empty((a.shape[0], ctx.shape[1]))
+        shifted_normb = np.empty(shifted_ctx.shape)
+        s = ctx.shape[0]
+        for i in range(self.nshift + 1):
+            idx = range(i, s) + range(0, i)
+            shifted_ctx[i * s: i * s + s] = ctx[idx]
+            shifted_normb[i * s: i * s + s] = normb[idx]
 
-        b = self.forward_layers(is_train, b, self.shop[-1:])
-        loss = self.loss.forward(is_train, a, b, pids)
+        a = self.forward_layers(is_train, [a, shifted_ctx], self.user[-2:])
+
+        loss = self.loss.forward(is_train, tensor.to_numpy(a), shifted_normb, pids)
         return loss, t2 - t1, time.time() - t2
 
     def backward(self):
@@ -802,7 +845,13 @@ class ContextNIN(TagNIN):
         dp_user = []
         duser, _ = self.loss.backward()
         # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
-        duser, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
+        dshifted_user, _ = self.backward_layers(tensor.from_numpy(duser), self.user[-1:-3:-1], dp_user)
+        s = dshifted_user.shape
+        s[0] /= self.nshift + 1
+        duser = np.zeros(s)
+        for i in range(self.nshift + 1):
+            duser += dshifted_user[i * s[0]: (i+1) * s[0]]
+        duser = tensor.to_numpy(duser)
         # dshop = dshop1 + dshop2
         # dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
         duser = self.backward_layers(duser, self.user[-3::-1], dp_user)
@@ -810,32 +859,30 @@ class ContextNIN(TagNIN):
         # self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
         return dp_user[::-1]
 
-    def search_on_batch(self, data, db_fea, db_pid, topk):
-        img, pid = data.next()
-        dist =np.zeros((img.shape[0], db_fea.shape[0]))
-        for i in range(img.shape[0]):
-            fea = np.repeat(img[0], db_fea.shape[1], axis=0)
-            fea = self.put_input_to_gpu(fea)
-            fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
-            fea = self.forward_layers(False, [fea, db_fea[i]], self.user[-2:])
-            dist[i, :] = np.sum((fea - db_fea[i]) ** 2, axis=1)
-        return self.match(dist, pid, db_pid, topk)
-
+    def rerank(self, query_fea, query_pid, db_fea, db_pid, topk):
+        fea = query_fea.reshape((1, query_fea.shape[0], query_fea.shape[1], query_fea.shape[2]))
+        fea = self.put_input_to_gpu(fea)
+        fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
+        fea = self.forward_layers(False, [fea, db_fea], self.user[-2:])
+        dist = np.sum((fea - db_fea) ** 2, axis=1)
+        return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
 
     def retrieval(self, data, result_path, topk=100):
-        sorted_idx, db_fea, db_pid = np.load(os.path.join(result_path, 'init_search.npz'))
+        sorted_idx, db_fea, db_pid = np.load(os.path.join(result_path,
+                                                          'init_search.npz'))
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
-        target = np.empty(sorted_idx.shape, dtype=np.bool)
+        new_target = np.empty(sorted_idx.shape, dtype=np.bool)
         new_sorted_idx = np.empty(sorted_idx.shape, dtype=np.int)
         for i in bar:
-            db = np.empty((self.batchsize, sorted_idx.shape[1], db_fea.shape[1]))
-            pid = [None] * self.batchsize
+            img, pid = data.next()
             for j in range(self.batchsize):
-                db[j,:, :] = db_fea[sorted_idx[i * self.batchsize + j]]
-                pid[j] = db_pid[sorted_idx[i * self.batchsize + j]]
-            t, idx = self.search_on_batch(data, db, pid, topk)
-            target[i * self.batchsize: (i + 1) * self.batchsize] = t
-            new_sorted_idx[i * self.batchsize: (i + 1) * self.batchsize] = idx
-        prec = compute_precision(target)
+                qid = i * self.batchsize + j
+                candidate = sorted_idx[qid]
+                t, s = self.rerank(img[j], pid[j], db_fea[candidate],
+                                   db_pid[candidate], topk)
+                new_target[qid] = t[0]
+                new_sorted_idx[qid] = sorted_idx[qid][s[0]]
+        data.stop()
+        prec = compute_precision(new_target)
         return prec, new_sorted_idx
