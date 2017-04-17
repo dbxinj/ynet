@@ -136,7 +136,7 @@ class TagAttention(layer.Layer):
         self.debug= debug
 
     def get_output_sample_shape(self):
-        return  (self.c, )
+        return (self.c, )
 
     def param_names(self):
         return self.embed.param_names()
@@ -149,9 +149,11 @@ class TagAttention(layer.Layer):
             print('%30s = %2.8f' % (name, np.average(np.abs(val))))
 
     def forward(self, is_train, x):
-        if is_train:
+        if type(x[0]) == tensor.Tensor:
             self.dev = x[0].device
-        img = tensor.to_numpy(x[0])
+            img = tensor.to_numpy(x[0])
+        else:
+            img = x[0]
         t = self.embed.forward(is_train, x[1])
         if self.debug:
             show_debuginfo(self.embed.name, t)
@@ -177,9 +179,10 @@ class TagAttention(layer.Layer):
         if self.debug:
             show_debuginfo(self.attention.name, dx2)
         _, dW = self.embed.backward(is_train, dt)
-        dx = dx1 + dx2
-        dx = tensor.from_numpy(dx.reshape((dx.shape[0], self.c, self.h, self.w)))
-        dx.to_device(self.dev)
+        dx = np.reshape(dx1 + dx2, (dx1.shape[0], self.c, self.h, self.w))
+        if self.dev is not None:
+            dx = tensor.from_numpy(
+            dx.to_device(self.dev)
         return dx, dW
 
 
@@ -202,7 +205,7 @@ class TagNIN(ynet.YNIN):
         self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
         user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(ynet.L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])

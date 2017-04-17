@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class YNet(object):
     '''Base network'''
-    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=False, nuser=1, nshop=1):
+    def __init__(self, loss, dev, img_size, batchsize=32, debug=False, freeze_shared=False, freeze_shop=False, freeze_user=False, nuser=1, nshop=1):
         self.debug = debug
         self.name = name
         self.loss = loss
@@ -28,6 +28,9 @@ class YNet(object):
         self.img_size = img_size
         self.nuser = nuser
         self.nshop = nshop
+        self.freeze_shared = freeze_shared
+        self.freeze_user = freeze_user
+        self.freeze_shop = freeze_shop
 
         self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize)
         self.layers = self.shared + self.user + self.shop
@@ -58,20 +61,32 @@ class YNet(object):
         for lyr in self.layers:
             lyr.to_device(dev)
 
-    def param_names(self, all=False):
+    def collect_layers(self, flag):
+        layers = []
+        if (not self.freeze_shared) or flag:
+            layers.extend(self.shared)
+        if (not self.freeze_user) or flag:
+            layers.extend(self.user)
+        if (not self.freeze_shop) or flag:
+            layers.extend(self.shop)
+        return layers
+
+    def param_names(self, flag=False):
         pname = []
-        for lyr in self.layers:
+        for lyr in self.collect_layers(flag):
             pname.extend(lyr.param_names())
         return pname
 
     def param_values(self, all=False):
         pvals = []
-        for lyr in self.layers:
+        for lyr in self.collect_layers(flag)
             pvals.extend(lyr.param_values())
         return pvals
 
     def init_params(self, weight_path=None):
         if weight_path is None:
+            assert not (self.freeze_shared or self.freeze_shop or self.freeze_user), \
+                    'no checkpoint file is give, must train all branches'
             for pname, pval in zip(self.param_names(), self.param_values()):
                 if 'conv' in pname and len(pval.shape) > 1:
                     initializer.gaussian(pval, 0, pval.shape[1])
@@ -368,7 +383,8 @@ class YNIN(YNet):
         duser, dshop = self.loss.backward()
         dshop = self.backward_layers(dshop, self.shop[::-1], param_grads)
         duser = self.backward_layers(duser, self.user[::-1], param_grads)
-        self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
+        if not self.freeze_shared:
+            self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
         return param_grads[::-1]
 
     def bprop(self, data):

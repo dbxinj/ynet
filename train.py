@@ -138,6 +138,9 @@ if __name__ == '__main__':
     parser.add_argument("--net", default='tagnin', choices=['tagnin', 'ctxnin', 'ynin'])
     parser.add_argument("--nshift", type=int, default=4)
     parser.add_argument("--ntrail", type=int, default=1)
+    parser.add_argument("--freeze_shared", action="store_true")
+    parser.add_argument("--freeze_user", action="store_true")
+    parser.add_argument("--freeze_shop", action="store_true")
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)

@@ -16,7 +16,8 @@ def create_net(args, test_data=None):
     if args.net == 'ynin':
         net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, debug=args.debug)
     elif args.net == 'tagnini':
-        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, debug=args.debug)
+        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize,
+                args.freeze_shared, args.freeze_shop, args.freeze_user, debug=args.debug)
     elif args.net == 'ctxnin':
         assert args.candidate_path is not None, 'must provide the candiate path'
         if not os.path.exists(args.candidate_path):
@@ -26,7 +27,8 @@ def create_net(args, test_data=None):
             print('Init retrieval %s' % (np.array_str(perf, 150)))
             with open(args.candiate_path, 'w') as fd:
                 pickle.dump(result, fd)
-        net = ContextNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.nshift, debug=args.debug)
+        net = ContextNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.nshift,
+                args.freeze_shared, args.freeze_shop, args.freeze_user, debug=args.debug)
     else:
         print('Unknown net type %s' % args.net)
         sys.exit(1)
