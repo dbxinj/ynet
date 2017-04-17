@@ -27,7 +27,7 @@ def read_products(fpath, delimiter=' ', seed=-1):
         random.shuffle(products)
     return products
 
-def filter_products(img_dir, img_file, products, nuser, nshop, delimiter=' '):
+def filter_products(img_dir, img_file, products, nuser=1, nshop=1, delimiter=' '):
     user = np.zeros((len(products),), dtype=int)
     shop = np.zeros((len(products),), dtype=int)
     pname2id = {}  # product name to id (index)
