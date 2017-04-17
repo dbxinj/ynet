@@ -64,9 +64,9 @@ def stat_list(lists):
 
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
-            capacity=10, delimiter=' ', nproc=1, meanstd=None, ncategory=20, ntag=0):
+            capacity=10, delimiter=' ', nproc=1, meanstd=None, ncategory=20, nattribute=0):
         self.ncategory = ncategory
-        self.ntag = ntag
+        self.nattribute = nattribute
         self.batchsize = batchsize  # num of products to process for training, num of images for val/test
         self.capacity = capacity
         self.proc = []
@@ -203,12 +203,12 @@ class DataIter(object):
         return ary.transpose(2, 0, 1)
 
     def tag2vec(self, pids):
-        l = self.ncategory + self.ntag
+        l = self.ncategory + self.nattribute
         vec = np.zeros((len(pids), l), dtype=np.float32)
         for i, pid in enumerate(pids):
             if self.ncategory > 0:
                 vec[i, self.pid2cat[pid]] = 1
-            if self.ntag > 0:
+            if self.nattribute > 0:
                 for t in self.products[pid][1:]:
                     vec[i, self.ncategory + int(t)] = 1
         return vec

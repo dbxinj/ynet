@@ -14,22 +14,23 @@ logger = logging.getLogger(__name__)
 def create_net(args, test_data=None):
     dev = device.create_cuda_gpu_on(args.gpu)
     if args.net == 'ynin':
-        net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, debug=args.debug)
+        net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev,
+                args.img_size, args.batchsize,  nshift=args.nshift, debug=args.debug)
     elif args.net == 'tagnin':
-        assert args.ncat > 0 or args.ntag > 0, 'Either num category or num tags should be set'
-        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize,
-                args.debug, args.freeze_shared, args.freeze_shop, args.freeze_user)
+        assert args.ncat > 0 or args.nattr > 0, 'Either num category or num tags should be set'
+        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr,
+                args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift, debug=args.debug)
     elif args.net == 'ctxnin':
         assert args.candidate_path is not None, 'must provide the candiate path'
         if not os.path.exists(args.candidate_path):
-            net = TagNIN('TagNIN', None, dev, args.img_size, args.batchsize, debug=args.debug)
+            net = TagNIN('TagNIN', None, dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr, debug=args.debug)
             perf, result = net.retrieval(test_data, topk=256)
             logging.info('Init retrieval: %s' % (np.array_str(perf, 150)))
             print('Init retrieval %s' % (np.array_str(perf, 150)))
             with open(args.candiate_path, 'w') as fd:
                 pickle.dump(result, fd)
-        net = ContextNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.nshift,
-                args.freeze_shared, args.freeze_shop, args.freeze_user, debug=args.debug)
+        net = ContextNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr,
+                args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift,debug=args.debug)
     else:
         print('Unknown net type %s' % args.net)
         sys.exit(1)

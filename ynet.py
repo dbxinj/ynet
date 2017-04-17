@@ -19,7 +19,9 @@ logger = logging.getLogger(__name__)
 
 class YNet(object):
     '''Base network'''
-    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=False, freeze_shared=False, freeze_shop=False, freeze_user=False, nuser=1, nshop=1):
+    def __init__(self, name, loss, dev, img_size, batchsize=32, ntag=0,
+            freeze_shared=False, freeze_shop=False, freeze_user=False,
+            nshift=1, debug=False, nuser=1, nshop=1):
         self.debug = debug
         self.name = name
         self.loss = loss
@@ -31,6 +33,8 @@ class YNet(object):
         self.freeze_shared = freeze_shared
         self.freeze_user = freeze_user
         self.freeze_shop = freeze_shop
+        self.nshift = nshift
+        self.ntags = ntags
 
         self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize)
         self.layers = self.shared + self.user + self.shop

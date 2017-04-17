@@ -84,21 +84,21 @@ def create_datasets(args, with_train, with_val, with_test=False):
     num_val_products = (num_products - num_train_products) // 2
     train_data, val_data, test_data = None, None, None
     if with_train:
-        train_products = data.filter_products(args.img_dir, img_list_file, products[0:num_train_products], args.nuser, args.nshop)
+        train_products = data.filter_products(args.img_dir, img_list_file, products[0:num_train_products])
         train_data = data.DataIter(args.img_dir, img_list_file, train_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
     if with_val:
         val_products = products[num_train_products: num_train_products + num_val_products]
-        val_products = data.filter_products(args.img_dir, img_list_file, val_products, args.nuser, args.nshop)
+        val_products = data.filter_products(args.img_dir, img_list_file, val_products)
         val_data = data.DataIter(args.img_dir, img_list_file, val_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
     if with_test:
         test_products = products[num_train_products + num_val_products:]
         test_data = data.DataIter(args.img_dir, img_list_file, test_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
 
     return train_data, val_data, test_data
 
@@ -133,8 +133,8 @@ if __name__ == '__main__':
     parser.add_argument("--nproc", type=int, default=1, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
     parser.add_argument("--img_size", type=int, default=224, help='img size')
-    parser.add_argument("--nuser", type=int, default=1, help='min num of user imgs per product for filtering training products')
-    parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
+    # parser.add_argument("--nuser", type=int, default=1, help='min num of user imgs per product for filtering training products')
+    # parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
     parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
     parser.add_argument("--search_freq", type=int, default=5, help='frequency of validation on retrieval')
     parser.add_argument("--topk", type=int, default=100, help='top results')
@@ -144,8 +144,8 @@ if __name__ == '__main__':
     parser.add_argument("--freeze_shared", action="store_true")
     parser.add_argument("--freeze_user", action="store_true")
     parser.add_argument("--freeze_shop", action="store_true")
-    parser.add_argument("--ncat", type=int, default=0)
-    parser.add_argument("--ntag", type=int, default=0)
+    parser.add_argument("--ncat", type=int, default=0, '# of different categories')
+    parser.add_argument("--nattr", type=int, default=0, '# of different attribute values')
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)

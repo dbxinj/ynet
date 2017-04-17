@@ -188,7 +188,8 @@ class TagAttention(layer.Layer):
 
 
 class TagNIN(ynet.YNIN):
-    def create_net(self, name, img_size, batchsize=32, ntags=123):
+    def create_net(self, name, img_size, batchsize=32):
+        assert self.ntag > 0, 'no tags for tag nin'
         shared = []
 
         self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
@@ -210,7 +211,9 @@ class TagNIN(ynet.YNIN):
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
-        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
+        shop.append(TagAttention('shop-tag',
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
+            debug=self.debug))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 

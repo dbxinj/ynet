@@ -1,17 +1,16 @@
-from tagnet import Softmax, Aggregation, ProductAttention, TagNIN
+from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagNIN
 
-from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Flatten, Slice
+from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice
 from singa import initializer
 from singa import layer
 from singa import loss
 from singa import tensor
+
 import cPickle as pickle
 import logging
 import os
 
 import numpy as np
-from numpy.core.umath_tests import inner1d
-import scipy.spatial
 from tqdm import trange
 import time
 
@@ -129,7 +128,7 @@ class QuadLoss(object):
     def forward(self, is_train, ufea, sfea, pids):
         if is_train:
             self.guser = np.zeros(ufea.shape, dtype=np.float32)
-            self.gshop = np.zeros(ufea.shape, dtype=np.float32)
+            self.gshop = np.zeros(sfea.shape, dtype=np.float32)
         ret = None
         bs = ufea.shape[0] / (self.nshift + 1)
         for i in range(1, self.nshift+1):
@@ -150,25 +149,9 @@ class QuadLoss(object):
 
 
 class CtxNIN(TagNIN):
-    def param_names(self, flag=False):
-        pname = []
-        layers = self.user
-        if flag:
-            layers = self.layers
-        for lyr in layers:
-            pname.extend(lyr.param_names())
-        return pname
-
-    def param_values(self, flag=False):
-        pvals = []
-        layers = self.user
-        if flag:
-            layers = self.layers
-        for lyr in layers:
-            pvals.extend(lyr.param_values())
-        return pvals
-
-    def create_net(self, name, img_size, batchsize=32, ntags=20):
+    def create_net(self, name, img_size, batchsize=32):
+        assert self.ntag > 0, 'no tags for ctx nin'
+        assert self.freeze_shop and self.freeze_shared, 'must freeze shop and shared'
         shared = []
 
         self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
@@ -184,15 +167,17 @@ class CtxNIN(TagNIN):
 
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
-        # shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
-        shop.append(TagAttention('shop-tag', input_sample_shape=[shop[-1].get_output_sample_shape(), (ntags, )], debug=self.debug))
-        shop.append(NpL2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag',
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
+            debug=self.debug))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
         user = []
         self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
-        # user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(ContextAttention('street-cxt', input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()], debug=self.debug))
-        user.append(NpL2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(ContextAttention('street-cxt',
+            input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()],
+            debug=self.debug))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         return shared, user, shop
 
@@ -206,29 +191,27 @@ class CtxNIN(TagNIN):
 
         b = self.forward_layers(is_train, b, self.shop[0:-2])
         ctx = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
-        normb = self.forward_layers(is_train, b, self.shop[-1:])
+        b = self.forward_layers(is_train, b, self.shop[-1:])
 
         a = self.forward_layers(is_train, a, self.user[0:-2])
         a = tensor.to_numpy(a)
-        a = np.tile(a, [self.nshift, 1, 1, 1])
-        shifted_ctx = np.empty((a.shape[0], ctx.shape[1]))
-        shifted_normb = np.empty(shifted_ctx.shape)
+        shifted_a = np.tile(a, [self.nshift, 1, 1, 1])
+        shifted_ctx = np.empty((shifted_a.shape[0], ctx.shape[1]))
+        shifted_b = np.empty(shifted_ctx.shape)
         s = ctx.shape[0]
         for i in range(self.nshift + 1):
             idx = range(i, s) + range(0, i)
             shifted_ctx[i * s: i * s + s] = ctx[idx]
-            shifted_normb[i * s: i * s + s] = normb[idx]
+            shifted_b[i * s: i * s + s] = normb[idx]
+        shifted_a = self.forward_layers(is_train, [shifted_a, shifted_ctx], self.user[-2:])
 
-        a = self.forward_layers(is_train, [a, shifted_ctx], self.user[-2:])
-
-        loss = self.loss.forward(is_train, a, shifted_normb, pids)
+        loss = self.loss.forward(is_train, shifted_a, shifted_b, None)
         return loss, t2 - t1, time.time() - t2
 
     def backward(self):
         if self.debug:
             print '------------backward------------'
-        # dp_shop, dp_user = [], []
-        dp_user = []
+        dp_shop = []
         duser, _ = self.loss.backward()
         # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
         dshifted_user, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
@@ -237,20 +220,23 @@ class CtxNIN(TagNIN):
         duser = np.zeros(s)
         for i in range(self.nshift + 1):
             duser += dshifted_user[i * s[0]: (i+1) * s[0]]
+        # todo: compute grade for shifted shop -> dshop2
         duser = tensor.to_numpy(duser)
         duser.to_device(self.device)
-        # dshop = dshop1 + dshop2
-        # dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
+        if not self.freeze_shop:
+            dshop = dshop1 + dshop2
+            dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
         duser = self.backward_layers(duser, self.user[-3::-1], dp_user)
-        # param_grads = dp_shop + dp_user
-        # self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
+        if not self.freeze_shared:
+            param_grads = dp_shop + dp_user
+            self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
         return dp_user[::-1]
 
     def rerank(self, query_fea, query_pid, db_fea, db_pid, topk):
         fea = query_fea.reshape((1, query_fea.shape[0], query_fea.shape[1], query_fea.shape[2]))
         fea = self.put_input_to_gpu(fea)
         fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
-        fea = np.tile(tensor.to_numpy(fea), [db_fea.shape[0], 1])
+        fea = np.tile(tensor.to_numpy(fea), [db_fea.shape[0], 1, 1, 1])
         fea = self.forward_layers(False, [fea, db_fea], self.user[-2:])
         dist = np.sum((fea - db_fea) ** 2, axis=1)
         return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
@@ -264,13 +250,13 @@ class CtxNIN(TagNIN):
         new_sorted_idx = np.empty(sorted_idx.shape, dtype=np.int)
         for i in bar:
             img, pid = data.next()
-            for j in range(self.batchsize):
-                qid = i * self.batchsize + j
-                candidate = sorted_idx[qid]
-                t, s = self.rerank(img[j], pid[j], db_fea[candidate],
-                                   db_pid[candidate], topk)
+            for j in range(img.shape[0]):
+                qid = i * img.shape[0] + j
+                candidates = sorted_idx[qid]
+                t, s = self.rerank(img[j], pid[j], db_fea[candidates],
+                                   db_pid[candidates], topk)
                 new_target[qid] = t[0]
-                new_sorted_idx[qid] = sorted_idx[qid][s[0]]
+                new_sorted_idx[qid] = candidates[s[0]]
         data.stop()
         prec = compute_precision(new_target)
         return prec, None
