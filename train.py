@@ -1,11 +1,10 @@
 import numpy as np
 import random
 import os
-import math
 import sys
 import logging
-import time
 import datetime
+import cPickle as pickle
 from argparse import ArgumentParser
 from tqdm import trange
 
@@ -17,7 +16,27 @@ logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message
 import model
 import data
 from singa import optimizer
-from singa import device
+
+def early_stop():
+    pass
+    '''
+    best_loss = 1000
+    nb_epoch_after_best = 0
+
+    if loss < best_loss - best_loss/10:
+        if epoch > 5 and loss < best_loss - best_loss/5:
+            net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
+        best_loss = loss
+        nb_epoch_after_best = 0
+    else:
+        nb_epoch_after_best += 1
+        if nb_epoch_after_best > 20:
+            break
+        elif nb_epoch_after_best % 10 == 0:
+            cfg.lr /= 10
+            print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
+            logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
+    '''
 
 
 def train(cfg, net, train_data, val_data, test_data=None):
@@ -30,41 +49,25 @@ def train(cfg, net, train_data, val_data, test_data=None):
     else:
         opt = optimizer.SGD(momentum=cfg.mom, weight_decay=cfg.weight_decay)
 
-    best_loss = 1000
-    nb_epoch_after_best = 0
     precision = []
     for epoch in range(cfg.max_epoch):
-        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
+        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr)
         logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
         if np.any(np.isnan(train_loss)) or np.any(np.isinf(train_loss)):
             return
 
-        val_loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
-        logging.info('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
-        print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
+        val_loss = net.evaluate_on_epoch(epoch, val_data)
+        logging.info('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss, 150)))
+        print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss, 150)))
         if np.any(np.isnan(val_loss)) or np.any(np.isinf(val_loss)):
             return
+
         if epoch % cfg.search_freq == 0 and test_data is not None:
-            perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
+            perf, _ = net.retrieval(test_data, cfg.topk, args.candidate_path)
             precision.append(perf)
-            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
-            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
+            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
+            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
             # net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
-        '''
-        if loss < best_loss - best_loss/10:
-            if epoch > 5 and loss < best_loss - best_loss/5:
-                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
-            best_loss = loss
-            nb_epoch_after_best = 0
-        else:
-            nb_epoch_after_best += 1
-            if nb_epoch_after_best > 20:
-                break
-            elif nb_epoch_after_best % 10 == 0:
-                cfg.lr /= 10
-                print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
-                logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
-        '''
     net.save(os.path.join(cfg.param_dir, 'model'))
     for prec in precision:
         print precision
@@ -75,26 +78,27 @@ def create_datasets(args, with_train, with_val, with_test=False):
     meanstd = np.load(os.path.join(data_dir, 'mean-std.npy'))
     img_list_file = os.path.join(data_dir, 'image.txt')
     product_list_file = os.path.join(data_dir, 'product.txt')
-    products = data.read_products(product_list_file) #[0:2000]
+    products = data.read_products(product_list_file) # [0:5000]
     num_products = len(products)
     num_train_products = int(num_products * args.train_split)
     num_val_products = (num_products - num_train_products) // 2
     train_data, val_data, test_data = None, None, None
     if with_train:
-        train_products = data.filter_products(args.img_dir, img_list_file,
-                products[0:num_train_products], nuser=args.nuser, nshop=args.nshop)
+        train_products = data.filter_products(args.img_dir, img_list_file, products[0:num_train_products])
         train_data = data.DataIter(args.img_dir, img_list_file, train_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
     if with_val:
         val_products = products[num_train_products: num_train_products + num_val_products]
-        val_products = data.filter_products(args.img_dir, img_list_file,
-                val_products, nuser=args.nuser, nshop=args.nshop)
+        val_products = data.filter_products(args.img_dir, img_list_file, val_products)
         val_data = data.DataIter(args.img_dir, img_list_file, val_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
     if with_test:
         test_products = products[num_train_products + num_val_products:]
         test_data = data.DataIter(args.img_dir, img_list_file, test_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, ncategory=args.ncat, nattr=args.nattr)
 
     return train_data, val_data, test_data
 
@@ -113,36 +117,46 @@ def gen_cfg(cfg):
 if __name__ == '__main__':
     parser = ArgumentParser(description="Product search with attention modeling")
     parser.add_argument("--batchsize", type=int, default=32)
-    parser.add_argument("--max_epoch", type=int, default=100)
+    parser.add_argument("--max_epoch", type=int, default=300)
     parser.add_argument("--opt", choices= ['sgd', 'adam', 'nesterov'], default='sgd')
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--dataset", choices=['darn', 'deepfashion'], default='darn')
-    parser.add_argument("--margin", type=float, default=0.2, help='margin for the triplet loss')
+    parser.add_argument("--margin", type=float, default=0.5, help='margin for the triplet loss')
     parser.add_argument("--param_dir", default='param')
     parser.add_argument("--data_dir", default='data')
     parser.add_argument("--img_dir", default='../darn/')
     parser.add_argument("--param_path", help='param pickle file path')
+    parser.add_argument("--candidate_path", help='results from initial search')
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--nproc", type=int, default=1, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
     parser.add_argument("--img_size", type=int, default=224, help='img size')
-    parser.add_argument("--nuser", type=int, default=1, help='min num of user imgs per product for filtering training products')
-    parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
+    # parser.add_argument("--nuser", type=int, default=1, help='min num of user imgs per product for filtering training products')
+    # parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
     parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
-    parser.add_argument("--search_freq", type=int, default=1, help='frequency of validation on retrieval')
+    parser.add_argument("--search_freq", type=int, default=5, help='frequency of validation on retrieval')
     parser.add_argument("--topk", type=int, default=100, help='top results')
+    parser.add_argument("--net", default='tagnin', choices=['tagnin', 'ctxnin', 'ynin', 'yvgg'])
+    parser.add_argument("--nshift", type=int, default=4)
+    parser.add_argument("--ntrail", type=int, default=1)
+    parser.add_argument("--freeze_shared", action="store_true")
+    parser.add_argument("--freeze_user", action="store_true")
+    parser.add_argument("--freeze_shop", action="store_true")
+    parser.add_argument("--ncat", type=int, default=0, help='# of different categories')
+    parser.add_argument("--nattr", type=int, default=0, help='# of different attribute values')
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)
-    dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
-            batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
-    for i in range(20):
-        args = gen_cfg(args)
-        logging.info('\n\n-----------------------%d trail----------------------------' % i)
-        args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+    net = model.create_net(args, test_data)
+    for i in range(args.ntrail):
+        if args.ntrail > 1:
+            args = gen_cfg(args)
+            logging.info('\n\n-----------------------%d trail----------------------------' % i)
+            args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+        else:
+            args.param_dir = os.path.join('param', args.dataset)
         os.makedirs(args.param_dir)
         net.init_params(args.param_path)
         train(args, net, train_data, val_data, test_data)

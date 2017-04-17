@@ -3,7 +3,6 @@ import numpy as np
 import time
 import os
 import sys
-import functools
 from multiprocessing import Process, Queue # , Value
 from multiprocessing.sharedctypes import RawArray
 from ctypes import c_float
@@ -28,7 +27,7 @@ def read_products(fpath, delimiter=' ', seed=-1):
         random.shuffle(products)
     return products
 
-def filter_products(img_dir, img_file, products, nuser, nshop, delimiter=' '):
+def filter_products(img_dir, img_file, products, nuser=1, nshop=1, delimiter=' '):
     user = np.zeros((len(products),), dtype=int)
     shop = np.zeros((len(products),), dtype=int)
     pname2id = {}  # product name to id (index)
@@ -63,22 +62,11 @@ def stat_list(lists):
     return min_len, total_len, total_len/len(lists)
 
 
-def load_pair(obj, nuser, nshop, proc):
-    obj.load_pair(poc, nuser, nshop)
-
-
-def load_user(obj, proc):
-    obj.load_user(poc)
-
-
-def load_shop(obj, proc):
-    obj.load_shop(poc)
-
-
-
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
-            capacity=10, delimiter=' ', nproc=1, meanstd=None):
+            capacity=10, delimiter=' ', nproc=1, meanstd=None, ncategory=20, nattribute=0):
+        self.ncategory = ncategory
+        self.nattribute = nattribute
         self.batchsize = batchsize  # num of products to process for training, num of images for val/test
         self.capacity = capacity
         self.proc = []
@@ -86,6 +74,7 @@ class DataIter(object):
         self.task = Queue(capacity) # tasks for the worker <offset, size>
         self.result = Queue(capacity) # results from the worker <offset, size, product ids>
         self.use_shared_mem = False
+        self.products = products
 
         # self.is_stop = Value(c_bool, False)
         self.img_buf = None  # shared mem
@@ -100,6 +89,7 @@ class DataIter(object):
         self.img_dir = img_dir
         self.img_size = img_size
         self.img_path = []
+        self.pid2cat = [-1] * len(products)
         self.pid2userids = [[] for _ in range(len(products))]
         self.pid2shopids = [[] for _ in range(len(products))]
         with open(image_file, 'r') as fd:
@@ -113,6 +103,11 @@ class DataIter(object):
                             self.pid2userids[pid].append(len(self.img_path) - 1)
                         else:
                             self.pid2shopids[pid].append(len(self.img_path) - 1)
+                        cat = int(rec[3])
+                        assert self.pid2cat[pid] == -1 or self.pid2cat[pid] == cat, \
+                            'img %s, category is not consistent; was set to %d' % (rec[0], self.pid2cat[pid])
+                        self.pid2cat[pid] = cat
+
         self.min_user_per_prod, self.num_user, avg_num = stat_list(self.pid2userids)
         logger.info('min street imgs per product = %d, avg = %d, total imgs = %d'
                 % (self.min_user_per_prod, avg_num, self.num_user))
@@ -207,9 +202,15 @@ class DataIter(object):
         ary = np.asarray(img.convert('RGB'), dtype=np.float32)
         return ary.transpose(2, 0, 1)
 
-    def tag2vec(self, tags):
-        vec = np.zeros((self.tag_dim,), dtype=np.float32)
-        vec[tags] = 1.0
+    def tag2vec(self, pids):
+        l = self.ncategory + self.nattribute
+        vec = np.zeros((len(pids), l), dtype=np.float32)
+        for i, pid in enumerate(pids):
+            if self.ncategory > 0:
+                vec[i, self.pid2cat[pid]] = 1
+            if self.nattribute > 0:
+                for t in self.products[pid][1:]:
+                    vec[i, self.ncategory + int(t)] = 1
         return vec
 
     def get_batch_range(self, nbatches, proc):
@@ -306,7 +307,7 @@ def calc_mean_std_for_single(data, nuser, nshop):
     return rgb, std
 
 
-def calc_mean_std(img_dir, data_dir, ratio=0.5):
+def calc_mean_std(img_dir, data_dir, ratio=0.1):
     products = read_products(os.path.join(data_dir, 'product.txt'))
     data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products[0: int(ratio * len(products))])
     qrgb, qstd = calc_mean_std_for_single(data, 1, 0)
@@ -338,8 +339,8 @@ def benchmark(img_dir, data_dir):
 
 if __name__ == '__main__':
     # logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
-    img_dir = '../darn'
-    data_dir = 'data/darn/'
-    benchmark(img_dir, data_dir)
-    # ary = calc_mean_std(img_dir, data_dir, 0.02)
-    # np.save(os.path.join(data_dir, 'mean-std'), ary)
+    img_dir = '/home/wangyan/deepfashion/img'
+    data_dir = 'data/deepfashion/'
+    # benchmark(img_dir, data_dir)
+    ary = calc_mean_std(img_dir, data_dir, 0.02)
+    np.save(os.path.join(data_dir, 'mean-std'), ary)
