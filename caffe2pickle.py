@@ -17,9 +17,13 @@ if __name__ == '__main__':
         print net.params.keys()
     else:
         params = {}
-        names = ['conv1-3x3', 'conv1-1x1-1', 'conv1-1x1-2', 'conv2-3x3', 'conv2-1x1-1', 'conv2-1x1-2', 'conv3-3x3', 'conv3-1x1-1', 'conv3-1x1-2', 'street-conv4-3x3', 'street-conv4-1x1-1', 'street-conv4-1x1-2', 'shop-conv4-3x3', 'shop-conv4-1x1-1', 'shop-conv4-1x1-2']
-        keys = net.params.keys()
-        keys = keys + keys[-3:]
+        # names = ['conv1-3x3', 'conv1-1x1-1', 'conv1-1x1-2', 'conv2-3x3', 'conv2-1x1-1', 'conv2-1x1-2', 'conv3-3x3', 'conv3-1x1-1', 'conv3-1x1-2', 'street-conv4-3x3', 'street-conv4-1x1-1', 'street-conv4-1x1-2', 'shop-conv4-3x3', 'shop-conv4-1x1-1', 'shop-conv4-1x1-2']
+        names = ['conv1-3x3', 'conv2', 'conv3', 'conv4', 'street-conv5', 'shop-conv5']
+
+        #keys = net.params.keys()
+        #keys = keys + keys[-3:]
+        keys = net.params.keys()[0:5]
+        kyes = keys + keys[-1:]
         print names
         print keys
         for out_layer, caffe_layer in zip(names, keys):
