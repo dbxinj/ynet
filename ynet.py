@@ -413,3 +413,34 @@ class YNIN(YNet):
         img = self.put_input_to_gpu(img)
         fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop)
         return tensor.to_numpy(fea), pid
+
+
+class YVGG(YNIN):
+    def create_net(self, name, img_size, batchsize=32):
+        shared = []
+
+        shared.append(Conv2D('conv1-3x3', 96, 7, 2, pad=0, sample_shape=(3, img_size, img_size)))
+        shared.append(Activation('conv1-3x3-relu', sample_shape=shared[-1].get_output_sample_shape())
+        self.add_conv(shared, 'conv1-3x3', 96, 7, 2, pad=0, sample_shape=(3, img_size, img_size))
+
+        self.add_conv(shared, 'conv2', [256, 256, 256], 5, 1, 2)
+        shared.append(MaxPooling2D('p2', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        self.add_conv(shared, 'conv3', [384, 384, 384], 3, 1, 1)
+        shared.append(MaxPooling2D('p3', 3, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
+        shared.append(slice_layer)
+
+        user = []
+        self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
+        user.append(AvgPooling2D('street-p4', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+
+        shop = []
+        self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
+        shop.append(AvgPooling2D('shop-p4', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+
+        return shared, user, shop
