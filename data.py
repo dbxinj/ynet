@@ -307,7 +307,7 @@ def calc_mean_std_for_single(data, nuser, nshop):
     return rgb, std
 
 
-def calc_mean_std(img_dir, data_dir, ratio=0.5):
+def calc_mean_std(img_dir, data_dir, ratio=0.1):
     products = read_products(os.path.join(data_dir, 'product.txt'))
     data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products[0: int(ratio * len(products))])
     qrgb, qstd = calc_mean_std_for_single(data, 1, 0)
@@ -339,8 +339,8 @@ def benchmark(img_dir, data_dir):
 
 if __name__ == '__main__':
     # logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
-    img_dir = '../darn'
-    data_dir = 'data/darn/'
-    benchmark(img_dir, data_dir)
-    # ary = calc_mean_std(img_dir, data_dir, 0.02)
-    # np.save(os.path.join(data_dir, 'mean-std'), ary)
+    img_dir = '/home/wangyan/deepfashion/img'
+    data_dir = 'data/deepfashion/'
+    # benchmark(img_dir, data_dir)
+    ary = calc_mean_std(img_dir, data_dir, 0.02)
+    np.save(os.path.join(data_dir, 'mean-std'), ary)
