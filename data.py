@@ -64,8 +64,9 @@ def stat_list(lists):
 
 class DataIter(object):
     def __init__(self, img_dir, image_file, products, img_size=224, batchsize=32,
-            capacity=10, delimiter=' ', nproc=1, meanstd=None, num_category=20):
+            capacity=10, delimiter=' ', nproc=1, meanstd=None, num_category=20, num_tag=0):
         self.num_category = num_category
+        self.num_tag = num_tag
         self.batchsize = batchsize  # num of products to process for training, num of images for val/test
         self.capacity = capacity
         self.proc = []
@@ -201,9 +202,14 @@ class DataIter(object):
         return ary.transpose(2, 0, 1)
 
     def tag2vec(self, pids):
-        vec = np.zeros((len(pids), self.num_category), dtype=np.float32)
+        len = self.num_category + self.num_tag
+        vec = np.zeros((len(pids), len), dtype=np.float32)
         for i, pid in enumerate(pids):
-            vec[i, self.pid2cat[pid]] = 1
+            if self.num_category > 0:
+                vec[i, self.pid2cat[pid]] = 1
+            if self.num_tag > 0:
+                for t in self.products[pid][1:]:
+                    vec[i, self.num_category + int(t)] = 1
         return vec
 
     def get_batch_range(self, nbatches, proc):

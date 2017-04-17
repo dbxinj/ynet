@@ -86,16 +86,19 @@ def create_datasets(args, with_train, with_val, with_test=False):
     if with_train:
         train_products = data.filter_products(args.img_dir, img_list_file, products[0:num_train_products], args.nuser, args.nshop)
         train_data = data.DataIter(args.img_dir, img_list_file, train_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
     if with_val:
         val_products = products[num_train_products: num_train_products + num_val_products]
         val_products = data.filter_products(args.img_dir, img_list_file, val_products, args.nuser, args.nshop)
         val_data = data.DataIter(args.img_dir, img_list_file, val_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
     if with_test:
         test_products = products[num_train_products + num_val_products:]
         test_data = data.DataIter(args.img_dir, img_list_file, test_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
+                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
 
     return train_data, val_data, test_data
 
@@ -141,6 +144,8 @@ if __name__ == '__main__':
     parser.add_argument("--freeze_shared", action="store_true")
     parser.add_argument("--freeze_user", action="store_true")
     parser.add_argument("--freeze_shop", action="store_true")
+    parser.add_argument("--ncat", type=int, default=0)
+    parser.add_argument("--ntag", type=int, default=0)
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)
