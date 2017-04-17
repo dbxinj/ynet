@@ -188,7 +188,7 @@ class TagAttention(layer.Layer):
 
 
 class TagNIN(ynet.YNIN):
-    def create_net(self, name, img_size, batchsize=32, ntags=20):
+    def create_net(self, name, img_size, batchsize=32, ntags=123):
         shared = []
 
         self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))

@@ -87,18 +87,18 @@ def create_datasets(args, with_train, with_val, with_test=False):
         train_products = data.filter_products(args.img_dir, img_list_file, products[0:num_train_products], args.nuser, args.nshop)
         train_data = data.DataIter(args.img_dir, img_list_file, train_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
+                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
     if with_val:
         val_products = products[num_train_products: num_train_products + num_val_products]
         val_products = data.filter_products(args.img_dir, img_list_file, val_products, args.nuser, args.nshop)
         val_data = data.DataIter(args.img_dir, img_list_file, val_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
+                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
     if with_test:
         test_products = products[num_train_products + num_val_products:]
         test_data = data.DataIter(args.img_dir, img_list_file, test_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc,
-                meanstd=meanstd, num_category=args.num_cat, num_tag=args.num_tag)
+                meanstd=meanstd, ncategory=args.ncat, ntag=args.ntag)
 
     return train_data, val_data, test_data
 

@@ -16,7 +16,7 @@ def create_net(args, test_data=None):
     if args.net == 'ynin':
         net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, debug=args.debug)
     elif args.net == 'tagnin':
-        assert args.num_cat > 0 or args.num_tag > 0, 'Either num category or num tags should be set'
+        assert args.ncat > 0 or args.ntag > 0, 'Either num category or num tags should be set'
         net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize,
                 args.debug, args.freeze_shared, args.freeze_shop, args.freeze_user)
     elif args.net == 'ctxnin':
