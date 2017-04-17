@@ -1,9 +1,10 @@
-from ynet import YNIN, TripletLoss
+from ynet import YNIN, YVGG, TripletLoss
 from tagnet import TagNIN
-from ctxnet import CtxNIN
+from ctxnet import CtxNIN, QuadLoss
 from singa import device
 
 import cPickle as pickle
+import numpy as np
 import logging
 import os
 import sys
@@ -16,9 +17,12 @@ def create_net(args, test_data=None):
     if args.net == 'ynin':
         net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev,
                 args.img_size, args.batchsize,  nshift=args.nshift, debug=args.debug)
+    elif args.net == 'yvgg':
+        net = YVGG('YVGG', TripletLoss(args.margin, args.nshift), dev,
+                args.img_size, args.batchsize,  nshift=args.nshift, debug=args.debug)
     elif args.net == 'tagnin':
         assert args.ncat > 0 or args.nattr > 0, 'Either num category or num tags should be set'
-        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr,
+        net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.ncat+args.nattr,
                 args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift, debug=args.debug)
     elif args.net == 'ctxnin':
         assert args.candidate_path is not None, 'must provide the candiate path'
@@ -29,7 +33,7 @@ def create_net(args, test_data=None):
             print('Init retrieval %s' % (np.array_str(perf, 150)))
             with open(args.candiate_path, 'w') as fd:
                 pickle.dump(result, fd)
-        net = ContextNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr,
+        net = CtxNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.ncat+args.nattr,
                 args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift,debug=args.debug)
     else:
         print('Unknown net type %s' % args.net)
