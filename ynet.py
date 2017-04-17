@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 class YNet(object):
     '''Base network'''
-    def __init__(self, loss, dev, img_size, batchsize=32, debug=False, freeze_shared=False, freeze_shop=False, freeze_user=False, nuser=1, nshop=1):
+    def __init__(self, name, loss, dev, img_size, batchsize=32, debug=False, freeze_shared=False, freeze_shop=False, freeze_user=False, nuser=1, nshop=1):
         self.debug = debug
         self.name = name
         self.loss = loss
@@ -77,9 +77,9 @@ class YNet(object):
             pname.extend(lyr.param_names())
         return pname
 
-    def param_values(self, all=False):
+    def param_values(self, flag=False):
         pvals = []
-        for lyr in self.collect_layers(flag)
+        for lyr in self.collect_layers(flag):
             pvals.extend(lyr.param_values())
         return pvals
 
@@ -288,14 +288,19 @@ class TripletLoss(loss.Loss):
 
     def backward(self):
         if self.deva is not None:
-            tguser = tensor.from_numpy(self.guser)
-            tguser.to_device(self.deva)
+            guser = tensor.from_numpy(self.guser)
+            guser.to_device(self.deva)
+        else:
+            guser = self.guser
+
         if self.devb is not None:
-            tgshop = tensor.from_numpy(self.gshop)
-            tgshop.to_device(self.devb)
-        tguser /= self.nshift
-        tgshop /= self.nshift
-        return tguser, tgshop
+            gshop = tensor.from_numpy(self.gshop)
+            gshop.to_device(self.devb)
+        else:
+            gshop = self.gshop
+        guser /= self.nshift
+        gshop /= self.nshift
+        return guser, gshop
 
 
 class YNIN(YNet):
@@ -361,9 +366,9 @@ class YNIN(YNet):
         imgs, pids = data.next()
         t2 = time.time()
         x = self.put_input_to_gpu(imgs)
-        a, b = self.forward_layers(is_train, x, self.shared)
-        a = self.forward_layers(is_train, a, self.user)
-        b = self.forward_layers(is_train, b, self.shop)
+        a, b = self.forward_layers(is_train and (not self.freeze_shared), x, self.shared)
+        a = self.forward_layers(is_train and (not self.freeze_user), a, self.user)
+        b = self.forward_layers(is_train and (not self.freeze_shop), b, self.shop)
         loss = self.loss.forward(is_train, a, b, pids)
         return loss, t2 - t1, time.time() -t2
 

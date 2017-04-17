@@ -1,4 +1,5 @@
 import ynet
+from util import *
 
 from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Flatten, Slice
 from singa import initializer
@@ -181,7 +182,7 @@ class TagAttention(layer.Layer):
         _, dW = self.embed.backward(is_train, dt)
         dx = np.reshape(dx1 + dx2, (dx1.shape[0], self.c, self.h, self.w))
         if self.dev is not None:
-            dx = tensor.from_numpy(
+            dx = tensor.from_numpy(dx)
             dx.to_device(self.dev)
         return dx, dW
 
@@ -218,11 +219,11 @@ class TagNIN(ynet.YNIN):
         imgs, pids = data.next()
         t2 = time.time()
         imgs = self.put_input_to_gpu(imgs)
-        a, b = self.forward_layers(is_train, imgs, self.shared)
-        a = self.forward_layers(is_train, a, self.user)
-        b = self.forward_layers(is_train, b, self.shop[0:-2])
+        a, b = self.forward_layers(is_train and (not self.freeze_shared), imgs, self.shared)
+        a = self.forward_layers(is_train and (not self.freeze_user), a, self.user)
+        b = self.forward_layers(is_train and (not self.freeze_shop), b, self.shop[0:-2])
         b = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
-        b = self.forward_layers(is_train, b, self.shop[-1:])
+        b = self.forward_layers(is_train and (not self.freeze_shop), b, self.shop[-1:])
         loss = self.loss.forward(is_train, a, b, pids)
         return loss, t2 - t1, time.time() - t2
 
@@ -232,4 +233,4 @@ class TagNIN(ynet.YNIN):
         fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop[0:-2])
         fea = self.shop[-2].forward(False, [fea, data.tag2vec(pid)])
         fea = self.forward_layers(False, fea, self.shop[-1:])
-        return tensor.to_numpy(fea), pid
+        return fea, pid

@@ -15,9 +15,9 @@ def create_net(args, test_data=None):
     dev = device.create_cuda_gpu_on(args.gpu)
     if args.net == 'ynin':
         net = YNIN('YNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, debug=args.debug)
-    elif args.net == 'tagnini':
+    elif args.net == 'tagnin':
         net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize,
-                args.freeze_shared, args.freeze_shop, args.freeze_user, debug=args.debug)
+                args.debug, args.freeze_shared, args.freeze_shop, args.freeze_user)
     elif args.net == 'ctxnin':
         assert args.candidate_path is not None, 'must provide the candiate path'
         if not os.path.exists(args.candidate_path):
