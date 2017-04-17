@@ -1,96 +1,120 @@
 import numpy as np
+import random
 import os
+import math
+import sys
 import logging
 import time
 import datetime
 from argparse import ArgumentParser
 from tqdm import trange
 
+log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+os.makedirs(log_dir)
+# logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
+logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
+
 import model
-from data import DARNDataIter, FashionDataIter
+import data
 from singa import optimizer
 from singa import device
 
 
-def update_perf(his, cur, a=0.8):
-    '''Accumulate the performance by considering history and current values.'''
-    return his * a + cur * (1 - a)
-
-
-def train(cfg, net, meanstd, train_data, val_data=None):
-    log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
-    os.makedirs(log_dir)
-    logging.basicConfig(filename=os.path.join(log_dir, 'log.txt'), format='%(message)s', level=logging.INFO)
-
-    sgd = optimizer.SGD(momentum=cfg.mom, weight_decay=cfg.weight_decay)
+def train(cfg, net, train_data, val_data, test_data=None):
+    logging.info(cfg)
+    print cfg
+    if cfg.opt == 'adam':
+        opt = optimizer.Adam(weight_decay=cfg.weight_decay)
+    elif cfg.opt == 'nesterov':
+        opt = optimizer.Nesterov(momentum=cfg.mom, weight_decay=cfg.weight_decay)
+    else:
+        opt = optimizer.SGD(momentum=cfg.mom, weight_decay=cfg.weight_decay)
 
     best_loss = 1000
+    nb_epoch_after_best = 0
+    precision = []
     for epoch in range(cfg.max_epoch):
-        bar = trange(train_data.num_batches, desc='Epoch %d' % epoch)
-        loss, dap, dan = 0, 0, 0
-        train_data.do_shuffle()
-        train_data.start(train_data.load_triples)
-        for b in bar:
-            t1 = time.time()
-            qimg, pimg, nimg, ptag, ntag = train_data.next()
-            t2 = time.time()
-            qimg -= meanstd[0][np.newaxis, :, np.newaxis, np.newaxis]
-            qimg /= meanstd[1][np.newaxis, :, np.newaxis, np.newaxis]
-            pimg -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
-            pimg /= meanstd[3][np.newaxis, :, np.newaxis, np.newaxis]
-            nimg -= meanstd[2][np.newaxis, :, np.newaxis, np.newaxis]
-            nimg /= meanstd[3][np.newaxis, :, np.newaxis, np.newaxis]
-            grads, l = net.bprop(qimg, pimg, nimg, ptag, ntag)
-            if cfg.debug:
-                print('-------------prams---------------')
-            for pname, pval, pgrad in zip(net.param_names(), net.param_values(), grads):
-                if cfg.debug:
-                    print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
-#                print pname, pgrad.shape, pval.shape
-                sgd.apply_with_lr(epoch, cfg.lr, pgrad, pval, str(pname))
-            loss = update_perf(loss, l[0])
-            dap = update_perf(dap, l[1])
-            dan = update_perf(dan, l[2])
-            t3 = time.time()
-            bar.set_postfix(train_loss=loss, dap=dap, dan=dan, bptime=t3-t2, load_time=t2-t1)
+        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr, cfg.nuser, cfg.nshop)
+        logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
+        if np.any(np.isnan(train_loss)) or np.any(np.isinf(train_loss)):
+            return
 
-        if val_data == None:
-            continue
-
-        bar = trange(val_data.num_batches, desc='Epoch %d' % epoch)
-        loss, dap, dan = 0, 0, 0
-        val_data.start(val_data.load_triples)
-        for b in bar:
-            qimg, pimg, nimg, ptag, ntag = val_data.next()
-            l, ap, an= net.evaluate(qimg, pimg, nimg, ptag, ntag)
-            loss += l
-            dap += ap
-            dan += an
-        print('Epoch %d, validation loss = %f, pos dist = %f, neg dist = %f' %\
-              (epoch, loss / val_data.num_batches, dap / val_data.num_batches,
-               dan / val_data.num_batches))
-        net.retrieval(val_data, os.path.join(cfg.param_dir, 'result-%d-' % epoch) ,100)
-
-        if loss < best_loss - cfg.margin/10:
+        val_loss = net.evaluate_on_epoch(epoch, val_data, cfg.nuser, cfg.nshop)
+        logging.info('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
+        print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss)))
+        if np.any(np.isnan(val_loss)) or np.any(np.isinf(val_loss)):
+            return
+        if epoch % cfg.search_freq == 0 and test_data is not None:
+            perf, _ = net.retrieval(test_data, '%s-%d-result' % (cfg.param_dir, epoch), cfg.topk)
+            precision.append(perf)
+            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
+            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 100)))
+            # net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
+        '''
+        if loss < best_loss - best_loss/10:
+            if epoch > 5 and loss < best_loss - best_loss/5:
+                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
             best_loss = loss
             nb_epoch_after_best = 0
-            if best_loss < cfg.margin/2:
-                net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
         else:
             nb_epoch_after_best += 1
-            if nb_epoch_after_best > 4:
+            if nb_epoch_after_best > 20:
                 break
-            elif nb_epoch_after_best % 2 == 0:
+            elif nb_epoch_after_best % 10 == 0:
                 cfg.lr /= 10
                 print("Decay learning rate %f -> %f" % (cfg.lr * 10, cfg.lr))
                 logging.info("Decay lr rate %f -> %f" % (cfg.lr * 10, cfg.lr))
-        net.save(os.path.join(cfg.param_dir, 'model'))
+        '''
+    net.save(os.path.join(cfg.param_dir, 'model'))
+    for prec in precision:
+        print precision
+
+
+def create_datasets(args, with_train, with_val, with_test=False):
+    data_dir = os.path.join(args.data_dir, args.dataset)
+    meanstd = np.load(os.path.join(data_dir, 'mean-std.npy'))
+    img_list_file = os.path.join(data_dir, 'image.txt')
+    product_list_file = os.path.join(data_dir, 'product.txt')
+    products = data.read_products(product_list_file) #[0:2000]
+    num_products = len(products)
+    num_train_products = int(num_products * args.train_split)
+    num_val_products = (num_products - num_train_products) // 2
+    train_data, val_data, test_data = None, None, None
+    if with_train:
+        train_products = data.filter_products(args.img_dir, img_list_file,
+                products[0:num_train_products], nuser=args.nuser, nshop=args.nshop)
+        train_data = data.DataIter(args.img_dir, img_list_file, train_products,
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+    if with_val:
+        val_products = products[num_train_products: num_train_products + num_val_products]
+        val_products = data.filter_products(args.img_dir, img_list_file,
+                val_products, nuser=args.nuser, nshop=args.nshop)
+        val_data = data.DataIter(args.img_dir, img_list_file, val_products,
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+    if with_test:
+        test_products = products[num_train_products + num_val_products:]
+        test_data = data.DataIter(args.img_dir, img_list_file, test_products,
+                img_size=args.img_size, batchsize=args.batchsize, nproc=args.nproc, meanstd=meanstd)
+
+    return train_data, val_data, test_data
+
+
+def gen_cfg(cfg):
+    cfg.lr=random.choice([0.1, 0.01, 0.001, 0.0001])
+    cfg.mom=random.choice([0.5, 0.8, 0.9])
+    cfg.weight_decay=random.choice([5e-4, 1e-4, 5e-5, 1e-5])
+    cfg.opt=random.choice(['sgd', 'adam', 'nesterov'])
+    if cfg.opt == 'adam':
+        cfg.mom = 0
+    cfg.margin=random.choice([1.5, 1.2, 1.0, 0.8, 0.5, 0.2, 0.1])
+    return cfg
 
 
 if __name__ == '__main__':
-    parser = ArgumentParser(description="Context-depedent attention modeling")
+    parser = ArgumentParser(description="Product search with attention modeling")
     parser.add_argument("--batchsize", type=int, default=32)
     parser.add_argument("--max_epoch", type=int, default=100)
+    parser.add_argument("--opt", choices= ['sgd', 'adam', 'nesterov'], default='sgd')
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
@@ -98,33 +122,27 @@ if __name__ == '__main__':
     parser.add_argument("--margin", type=float, default=0.2, help='margin for the triplet loss')
     parser.add_argument("--param_dir", default='param')
     parser.add_argument("--data_dir", default='data')
-    parser.add_argument("--image_dir", default='/home/wangyan/darn_dataset')
+    parser.add_argument("--img_dir", default='../darn/')
     parser.add_argument("--param_path", help='param pickle file path')
     parser.add_argument("--debug", action="store_true")
-    parser.add_argument("--nproc", type=int, default=2, help='num of data loading process')
+    parser.add_argument("--nproc", type=int, default=1, help='num of data loading process')
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
-    parser.add_argument("--img_size", type=int, default=224, help='image size')
+    parser.add_argument("--img_size", type=int, default=224, help='img size')
+    parser.add_argument("--nuser", type=int, default=1, help='min num of user imgs per product for filtering training products')
+    parser.add_argument("--nshop", type=int, default=1, help='min num of shop imgs per product for filtering training products')
+    parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
+    parser.add_argument("--search_freq", type=int, default=1, help='frequency of validation on retrieval')
+    parser.add_argument("--topk", type=int, default=100, help='top results')
     args = parser.parse_args()
 
-    data_dir = os.path.join(args.data_dir, args.dataset)
-    meanstd = np.load(os.path.join(data_dir, 'meta.npy'))
-    train_pair = os.path.join(data_dir, 'train_pair.txt')
-    val_pair = os.path.join(data_dir, 'validation_pair.txt')
-    if args.dataset == 'darn':
-        train_shop = os.path.join(data_dir, 'train_shop.txt')
-        val_shop = os.path.join(data_dir, 'validation_shop.txt')
-        train_data = DARNDataIter(args.image_dir, train_pair, train_shop, img_size=args.img_size, nproc=args.nproc)
-        val_data = DARNDataIter(args.image_dir, val_pair, val_shop, img_size=args.img_size, nproc=args.nproc)
-    elif args.dataset == 'deepfashion':
-        shop = os.path.join(data_dir, 'shop.txt')
-        train_data = FashionDataIter(args.image_dir, train_pair, shop, img_size=args.img_size, nproc=args.nproc)
-        val_data = FashionDataIter(args.image_dir, val_pair, shop, img_size=args.img_size, nproc=args.nproc)
-    else:
-        print('Unknown dataset name')
+    train_data, val_data, test_data = create_datasets(args, True, True, True)
     dev = device.create_cuda_gpu_on(args.gpu)
-    net = model.CANIN('canet', model.TripletLoss(args.margin), dev, img_size=args.img_size, batchsize=args.batchsize, debug=args.debug)
-    net.init_params(args.param_path)
-    # args = random_gen_args(args)
-    args.param_dir = os.path.join(args.param_dir, args.dataset)
-    os.makedirs(args.param_dir)
-    train(args, net, meanstd, train_data, val_data)
+    net = model.YNIN('YNIN', model.TripletLoss(args.margin, args.nuser, args.nshop), dev, img_size=args.img_size,
+            batchsize=args.batchsize, nuser=args.nuser, nshop=args.nshop, debug=args.debug)
+    for i in range(20):
+        args = gen_cfg(args)
+        logging.info('\n\n-----------------------%d trail----------------------------' % i)
+        args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+        os.makedirs(args.param_dir)
+        net.init_params(args.param_path)
+        train(args, net, train_data, val_data, test_data)

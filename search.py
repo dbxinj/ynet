@@ -16,7 +16,7 @@ if __name__ == '__main__':
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--batchsize", type=int, default=32)
     parser.add_argument("--gpu", type=int, default=0, help='gpu id')
-    parser.add_argument("--img_size", type=int, default=227, help='image size')
+    parser.add_argument("--img_size", type=int, default=224, help='image size')
     parser.add_argument("--phase", default='test', choices=['validation', 'test'])
     args = parser.parse_args()
 
@@ -39,4 +39,4 @@ if __name__ == '__main__':
 
     result_path = os.path.join('result', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
 
-    net.retrieval(data, result_path, topk=100)
+    net.retrieval(data, result_path, meanstd, topk=100)
