@@ -28,10 +28,11 @@ def create_net(args, test_data=None):
         assert args.candidate_path is not None, 'must provide the candiate path'
         if not os.path.exists(args.candidate_path):
             net = TagNIN('TagNIN', None, dev, args.img_size, args.batchsize, ntag = args.ncat+args.nattr, debug=args.debug)
+            net.init_params(args.param_path)
             perf, result = net.retrieval(test_data, topk=256)
             logging.info('Init retrieval: %s' % (np.array_str(perf, 150)))
             print('Init retrieval %s' % (np.array_str(perf, 150)))
-            with open(args.candiate_path, 'w') as fd:
+            with open(args.candidate_path, 'w') as fd:
                 pickle.dump(result, fd)
         net = CtxNIN('CtxNIN', QuadLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.ncat+args.nattr,
                 args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift,debug=args.debug)

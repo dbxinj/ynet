@@ -23,7 +23,8 @@ if __name__ == '__main__':
         #keys = net.params.keys()
         #keys = keys + keys[-3:]
         keys = net.params.keys()[0:5]
-        kyes = keys + keys[-1:]
+        conv5 = keys[-1]
+        keys.append(conv5)
         print names
         print keys
         for out_layer, caffe_layer in zip(names, keys):

@@ -70,7 +70,7 @@ def train(cfg, net, train_data, val_data, test_data=None):
             # net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
     net.save(os.path.join(cfg.param_dir, 'model'))
     for prec in precision:
-        print precision
+        print prec
 
 
 def create_datasets(args, with_train, with_val, with_test=False):
