@@ -207,7 +207,7 @@ class YNet(object):
         dist = scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
         target, sorted_idx = self.match(dist, query_id, db_id, topk)
         prec = compute_precision(target)
-        return prec, (sorted_idx, db_fea, db_id)
+        return prec, (sorted_idx, target, db_fea, db_id)
 
     def match(self, dist, query_id, db_id, topk=100):
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]

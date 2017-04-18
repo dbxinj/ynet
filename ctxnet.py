@@ -1,4 +1,5 @@
 from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagAttention, TagNIN
+from util import *
 
 from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice
 from singa import initializer
@@ -187,23 +188,27 @@ class CtxNIN(TagNIN):
         t2 = time.time()
         imgs = self.put_input_to_gpu(imgs)
 
-        a, b = self.forward_layers(is_train, imgs, self.shared)
+        train_shared = is_train and (not self.freeze_shared)
+        train_shop = is_train and (not self.freeze_shop)
+        train_user = is_train and (not self.freeze_user)
 
-        b = self.forward_layers(is_train, b, self.shop[0:-2])
-        ctx = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
-        b = self.forward_layers(is_train, ctx, self.shop[-1:])
+        a, b = self.forward_layers(train_shared, imgs, self.shared)
 
-        a = self.forward_layers(is_train, a, self.user[0:-2])
+        b = self.forward_layers(train_shop, b, self.shop[0:-2])
+        ctx = self.shop[-2].forward(train_shop, [b, data.tag2vec(pids[a.shape[0]:])])
+        b = self.forward_layers(train_shop, ctx, self.shop[-1:])
+
+        a = self.forward_layers(train_user, a, self.user[0:-2])
         a = tensor.to_numpy(a)
-        shifted_a = np.tile(a, [self.nshift, 1, 1, 1])
+        shifted_a = np.tile(a, [self.nshift + 1, 1, 1, 1])
         shifted_ctx = np.empty((shifted_a.shape[0], ctx.shape[1]))
         shifted_b = np.empty(shifted_ctx.shape)
         s = ctx.shape[0]
         for i in range(self.nshift + 1):
             idx = range(i, s) + range(0, i)
             shifted_ctx[i * s: i * s + s] = ctx[idx]
-            shifted_b[i * s: i * s + s] = normb[idx]
-        shifted_a = self.forward_layers(is_train, [shifted_a, shifted_ctx], self.user[-2:])
+            shifted_b[i * s: i * s + s] = b[idx]
+        shifted_a = self.forward_layers(train_user, [shifted_a, shifted_ctx], self.user[-2:])
 
         loss = self.loss.forward(is_train, shifted_a, shifted_b, None)
         return loss, t2 - t1, time.time() - t2
@@ -211,17 +216,18 @@ class CtxNIN(TagNIN):
     def backward(self):
         if self.debug:
             print '------------backward------------'
-        dp_shop = []
+        dp_user = []
         duser, _ = self.loss.backward()
         # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
         dshifted_user, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
         s = dshifted_user.shape
-        s[0] /= self.nshift + 1
-        duser = np.zeros(s)
+        assert self.batchsize == s[0] / (self.nshift + 1), \
+                'batchsize doesnot match  %d vs %d' % (self.batchsize, s[0] / (self.nshift + 1))
+        duser = np.zeros((self.batchsize, s[1], s[2], s[3]))
         for i in range(self.nshift + 1):
-            duser += dshifted_user[i * s[0]: (i+1) * s[0]]
+            duser += dshifted_user[i * self.batchsize: (i+1) * self.batchsize]
         # todo: compute grade for shifted shop -> dshop2
-        duser = tensor.to_numpy(duser)
+        duser = tensor.from_numpy(duser)
         duser.to_device(self.device)
         if not self.freeze_shop:
             dshop = dshop1 + dshop2
@@ -232,31 +238,32 @@ class CtxNIN(TagNIN):
             self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
         return dp_user[::-1]
 
-    def rerank(self, query_fea, query_pid, db_fea, db_pid, topk):
+    def rerank(self, query_fea, db_fea, target, topk):
         fea = query_fea.reshape((1, query_fea.shape[0], query_fea.shape[1], query_fea.shape[2]))
         fea = self.put_input_to_gpu(fea)
         fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
         fea = np.tile(tensor.to_numpy(fea), [db_fea.shape[0], 1, 1, 1])
         fea = self.forward_layers(False, [fea, db_fea], self.user[-2:])
         dist = np.sum((fea - db_fea) ** 2, axis=1)
-        return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
+        # return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
+        idx = np.argsort(dist)
+        return target[idx], idx
 
     def retrieval(self, data, topk, candidate_path):
         with open(os.path.join(candidate_path), 'r') as fd:
-            sorted_idx, db_fea, db_pid = pickle.load(fd)
+            sorted_idx, target, db_fea, db_pid = pickle.load(fd)
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
-        new_target = np.empty(sorted_idx.shape, dtype=np.bool)
+        new_target = np.empty(target.shape, dtype=np.bool)
         new_sorted_idx = np.empty(sorted_idx.shape, dtype=np.int)
         for i in bar:
             img, pid = data.next()
             for j in range(img.shape[0]):
                 qid = i * img.shape[0] + j
                 candidates = sorted_idx[qid]
-                t, s = self.rerank(img[j], pid[j], db_fea[candidates],
-                                   db_pid[candidates], topk)
-                new_target[qid] = t[0]
-                new_sorted_idx[qid] = candidates[s[0]]
+                t, s = self.rerank(img[j], db_fea[candidates], target[qid], topk)
+                new_target[qid] = t
+                new_sorted_idx[qid] = candidates[s]
         data.stop()
         prec = compute_precision(new_target)
         return prec, None
