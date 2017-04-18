@@ -418,35 +418,35 @@ class YVGG(YNIN):
     def create_net(self, name, img_size, batchsize=32):
         shared = []
 
-        shared.append(Conv2D('conv1-3x3', 96, 7, 2, pad=0, sample_shape=(3, img_size, img_size)))
-        shared.append(Activation('conv1-relu', sample_shape=shared[-1].get_output_sample_shape()))
-        shared.append(LRN('conv1-norm', size=5, alpha=5e-4, beta=0.75, k=2, sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Conv2D('conv1-3x3', 96, 7, 2, pad=1,  input_sample_shape=(3, img_size, img_size)))
+        shared.append(Activation('conv1-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(LRN('conv1-norm', size=5, alpha=5e-4, beta=0.75, k=2, input_sample_shape=shared[-1].get_output_sample_shape()))
         shared.append(MaxPooling2D('pool1', 3, 3, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        shared.append(Conv2D('conv2', 256, 5, 1, pad=1, sample_shape=shared[-1].get_output_sample_shape()))
-        shared.append(Activation('conv2-relu', sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Conv2D('conv2', 256, 5, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv2-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
         shared.append(MaxPooling2D('pool2', 2, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        shared.append(Conv2D('conv3', 512, 3, 1, pad=1, sample_shape=shared[-1].get_output_sample_shape()))
-        shared.append(Activation('conv3-relu', sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Conv2D('conv3', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv3-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
 
-        shared.append(Conv2D('conv4', 512, 3, 1, pad=1, sample_shape=shared[-1].get_output_sample_shape()))
-        shared.append(Activation('conv4-relu', sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Conv2D('conv4', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv4-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
 
         slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
         shared.append(slice_layer)
 
         user = []
-        user.append(Conv2D('street-conv5', 512, 3, 1, pad=1, sample_shape=shared[-1].get_output_sample_shape()))
-        user.append(Activation('street-conv5-relu', sample_shape=user[-1].get_output_sample_shape()))
-        user.append(AvgPooling2D('street-pool5', 6, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(AvgPooling2D('street-pool5', 17, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
-        shop.append(Conv2D('shop-conv5', 512, 3, 1, pad=1, sample_shape=shared[-1].get_output_sample_shape()))
-        shop.append(Activation('shop-conv5-relu', sample_shape=shop[-1].get_output_sample_shape()))
-        shop.append(AvgPooling2D('shop-pool5', 6, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(AvgPooling2D('shop-pool5', 17, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
