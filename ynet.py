@@ -33,7 +33,7 @@ class YNet(object):
         self.freeze_user = freeze_user
         self.freeze_shop = freeze_shop
         self.nshift = nshift
-        self.ntags = ntags
+        self.ntag = ntag
 
         self.shared, self.user, self.shop = self.create_net(name, img_size, batchsize)
         self.layers = self.shared + self.user + self.shop

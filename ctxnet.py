@@ -1,4 +1,4 @@
-from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagNIN
+from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagAttention, TagNIN
 
 from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice
 from singa import initializer
@@ -101,7 +101,7 @@ class ContextAttention(layer.Layer):
         y = self.agg.forward(is_train, [img, w])
         if self.debug:
             show_debuginfo(self.agg.name, y)
-        return tensor.from_numpy(y)
+        return y
 
     def backward(self, is_train, dy):
         [dx1, dw], _ = self.agg.backward(is_train, dy)
@@ -191,7 +191,7 @@ class CtxNIN(TagNIN):
 
         b = self.forward_layers(is_train, b, self.shop[0:-2])
         ctx = self.shop[-2].forward(is_train, [b, data.tag2vec(pids[a.shape[0]:])])
-        b = self.forward_layers(is_train, b, self.shop[-1:])
+        b = self.forward_layers(is_train, ctx, self.shop[-1:])
 
         a = self.forward_layers(is_train, a, self.user[0:-2])
         a = tensor.to_numpy(a)
