@@ -92,6 +92,7 @@ class DataIter(object):
         self.pid2cat = [-1] * len(products)
         self.pid2userids = [[] for _ in range(len(products))]
         self.pid2shopids = [[] for _ in range(len(products))]
+        error_img = 0
         with open(image_file, 'r') as fd:
             for line in fd.readlines():
                 rec = line.strip('\n').split(delimiter)
@@ -104,9 +105,12 @@ class DataIter(object):
                         else:
                             self.pid2shopids[pid].append(len(self.img_path) - 1)
                         cat = int(rec[3])
-                        assert self.pid2cat[pid] == -1 or self.pid2cat[pid] == cat, \
-                            'img %s, category is not consistent; was set to %d' % (rec[0], self.pid2cat[pid])
+                        if self.pid2cat[pid] != -1 and self.pid2cat[pid] != cat:
+                            error_img += 1
+                        # assert self.pid2cat[pid] == -1 or self.pid2cat[pid] == cat, \
+                        #    'img %s, category is not consistent; was set to %d' % (rec[0], self.pid2cat[pid])
                         self.pid2cat[pid] = cat
+        logger.info('# of error imgs (whose product have multiple categories) = %d' % error_img)
 
         self.min_user_per_prod, self.num_user, avg_num = stat_list(self.pid2userids)
         logger.info('min street imgs per product = %d, avg = %d, total imgs = %d'
@@ -307,7 +311,7 @@ def calc_mean_std_for_single(data, nuser, nshop):
     return rgb, std
 
 
-def calc_mean_std(img_dir, data_dir, ratio=0.1):
+def calc_mean_std(img_dir, data_dir, ratio=0.5):
     products = read_products(os.path.join(data_dir, 'product.txt'))
     data = DataIter(img_dir, os.path.join(data_dir, 'image.txt'), products[0: int(ratio * len(products))])
     qrgb, qstd = calc_mean_std_for_single(data, 1, 0)
@@ -338,9 +342,9 @@ def benchmark(img_dir, data_dir):
 
 
 if __name__ == '__main__':
-    # logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logger.INFO)
+    logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
     img_dir = '/home/wangyan/deepfashion/img'
     data_dir = 'data/deepfashion/'
     # benchmark(img_dir, data_dir)
-    ary = calc_mean_std(img_dir, data_dir, 0.02)
+    ary = calc_mean_std(img_dir, data_dir, 0.5)
     np.save(os.path.join(data_dir, 'mean-std'), ary)
