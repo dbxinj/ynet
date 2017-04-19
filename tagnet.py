@@ -1,7 +1,7 @@
 import ynet
 from util import *
 
-from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Flatten, Slice
+from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Flatten, Slice, LRN
 from singa import initializer
 from singa import layer
 from singa import loss
