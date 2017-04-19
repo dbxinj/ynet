@@ -177,7 +177,7 @@ class YNet(object):
         return query_fea, query_pid
 
     def extract_db_feature(self, data):
-        '''x for shop images'''
+        '''extract un-normalized feature'''
         data.start(0, self.nshop)
         bar = trange(data.num_batches, desc='Database Image')
         db_fea, db_pid = None, []
@@ -210,11 +210,13 @@ class YNet(object):
 
     def retrieval(self, data, topk=100, candiate_path=None):
         query_fea, query_id = self.extract_query_feature(data)
-        db_fea, db_id = self.extract_db_feature(data)
-        dist = scipy.spatial.distance.cdist(query_fea, db_fea,'euclidean')
+        db_raw, db_id = self.extract_db_feature(data)
+        norm = np.sqrt(np.sum(db_raw**2, axis=1) + 1e-7)
+        db_fea = db_raw / norm[:, np.newaxis]
+        dist = scipy.spatial.distance.cdist(query_fea, db_fea, 'euclidean')
         target, sorted_idx = self.match(dist, query_id, db_id, topk)
         prec = compute_precision(target)
-        return prec, (sorted_idx, target, db_fea, db_id)
+        return prec, (sorted_idx, target, db_raw, db_id)
 
     def match(self, dist, query_id, db_id, topk=100):
         sorted_idx=np.argsort(dist,axis=1)[:, 0:topk]
@@ -415,9 +417,10 @@ class YNIN(YNet):
         return tensor.to_numpy(fea), pid
 
     def extract_db_feature_on_batch(self, data):
+        '''extract un-normalized feature'''
         img, pid = data.next()
         img = self.put_input_to_gpu(img)
-        fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop)
+        fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop[0:-1])
         return tensor.to_numpy(fea), pid
 
 

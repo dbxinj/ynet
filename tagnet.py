@@ -235,5 +235,4 @@ class TagNIN(ynet.YNIN):
         img = self.put_input_to_gpu(img)
         fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop[0:-2])
         fea = self.shop[-2].forward(False, [fea, data.tag2vec(pid)])
-        fea = self.forward_layers(False, fea, self.shop[-1:])
         return fea, pid

@@ -262,42 +262,46 @@ class CtxNIN(TagNIN):
     def backward(self):
         if self.debug:
             print '------------backward------------'
-        dp_user = []
-        duser, _ = self.loss.backward()
-        # dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
-        dshifted_user, _ = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
+        dp_user, dp_shop = [], []
+        duser, dshop = self.loss.backward()
+        if not self.freeze_shop:
+            dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
+        dshifted_user, dshifted_shop = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
         s = dshifted_user.shape
         assert self.batchsize == s[0] / (self.nshift + 1), \
                 'batchsize doesnot match  %d vs %d' % (self.batchsize, s[0] / (self.nshift + 1))
         duser = np.zeros((self.batchsize, s[1], s[2], s[3]))
+        if not self.freeze_shop:
+            dshop2 = np.zeros((self.batchsize, dshifted_shop.shape[1]))
         for i in range(self.nshift + 1):
             duser += dshifted_user[i * self.batchsize: (i+1) * self.batchsize]
-        # todo: compute grade for shifted shop -> dshop2
+            if not self.freeze_shop:
+                idx = range(i, self.batchsize) + range(0, i)
+                dshop2[idx] += dshifted_shop[i * self.batchsize: (i+1) * self.batchsize]
         duser = tensor.from_numpy(duser)
         duser.to_device(self.device)
         if not self.freeze_shop:
             dshop = dshop1 + dshop2
-            dshop = self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
-        duser = self.backward_layers(duser, self.user[-3::-1], dp_user)
-        if not self.freeze_shared:
-            param_grads = dp_shop + dp_user
-            self.backward_layers([duser, dshop], self.shared[::-1], param_grads)
-        return dp_user[::-1]
+            self.backward_layers(dshop, self.shop[-2::-1], dp_shop)
+        self.backward_layers(duser, self.user[-3::-1], dp_user)
+        return dp_user[::-1] + dp_shop[::-1]
 
-    def rerank(self, query_fea, db_fea, target, topk):
+    def rerank(self, query_fea, db_fea, db_norm, topk):
         fea = query_fea.reshape((1, query_fea.shape[0], query_fea.shape[1], query_fea.shape[2]))
         fea = self.put_input_to_gpu(fea)
         fea = self.forward_layers(False, fea, self.shared[0:-1] + self.user[0:-2])
         fea = np.tile(tensor.to_numpy(fea), [db_fea.shape[0], 1, 1, 1])
         fea = self.forward_layers(False, [fea, db_fea], self.user[-2:])
-        dist = np.sum((fea - db_fea) ** 2, axis=1)
+        dist = np.sum((fea - db_norm) ** 2, axis=1)
         # return self.match(dist.reshape((1, -1)), [query_pid], db_pid, topk)
         idx = np.argsort(dist)
-        return target[idx], idx
+        return idx
 
     def retrieval(self, data, topk, candidate_path):
         with open(os.path.join(candidate_path), 'r') as fd:
             sorted_idx, target, db_fea, db_pid = pickle.load(fd)
+        norm = np.sqrt(np.sum(db_fea**2, axis=1) + 1e-7)
+        db_norm = db_fea / norm[:, np.newaxis]
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
         new_target = np.empty(target.shape, dtype=np.bool)
@@ -307,9 +311,9 @@ class CtxNIN(TagNIN):
             for j in range(img.shape[0]):
                 qid = i * img.shape[0] + j
                 candidates = sorted_idx[qid]
-                t, s = self.rerank(img[j], db_fea[candidates], target[qid], topk)
-                new_target[qid] = t
-                new_sorted_idx[qid] = candidates[s]
+                idx = self.rerank(img[j], db_fea[candidates], db_norm[candidates], topk)
+                new_target[qid] = target[qid, idx]
+                new_sorted_idx[qid] = candidates[idx]
         data.stop()
         prec = compute_precision(new_target)
-        return prec, None
+        return prec, (new_sorted_idx, new_target, None, None)
