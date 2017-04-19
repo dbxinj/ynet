@@ -49,12 +49,6 @@ def train(cfg, net, train_data, val_data, test_data=None):
 
     precision = []
     for epoch in range(cfg.max_epoch):
-        if epoch % cfg.search_freq == 0 and test_data is not None:
-            perf, _ = net.retrieval(test_data, cfg.topk, args.candidate_path)
-            precision.append(perf)
-            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
-            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
-
         train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr * math.pow(0.1, epoch // cfg.decay_freq))
         logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
         if np.any(np.isnan(train_loss)) or np.any(np.isinf(train_loss)):
@@ -65,6 +59,11 @@ def train(cfg, net, train_data, val_data, test_data=None):
         print('Validation at epoch %d: %s' % (epoch, np.array_str(val_loss, 150)))
         if np.any(np.isnan(val_loss)) or np.any(np.isinf(val_loss)):
             return
+        if epoch % cfg.search_freq == 0 and test_data is not None:
+            perf, _ = net.retrieval(test_data, cfg.topk, args.candidate_path)
+            precision.append(perf)
+            logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
+            print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
         if epoch > 0 and epoch % 30 == 0:
             net.save(os.path.join(cfg.param_dir, 'model-%d' % epoch))
 

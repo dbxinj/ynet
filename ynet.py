@@ -122,7 +122,14 @@ class YNet(object):
                         w = np.reshape(params[name], (oc, ic, -1))
                         w[:, [0,1,2], :] = w[:, [2,1,0], :]
                         params[name] = np.reshape(w, (oc,-1))
-                    val.copy_from_numpy(params[name])
+                    if val.size() != params[name].size:
+                        print 'Param: %s mismatch in the checkpoint file' % name
+                        if 'conv' in name and len(val.shape) > 1:
+                            initializer.gaussian(val, 0, val.shape[1])
+                        else:
+                            val.set_value(0)
+                    else:
+                        val.copy_from_numpy(params[name])
                     if self.debug:
                         print name, params[name].shape, val.l1()
 

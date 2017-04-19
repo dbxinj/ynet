@@ -70,6 +70,52 @@ class MLPAttention(layer.Layer):
         return [dx, dctx], [tensor.from_numpy(d) for d in [dU, dV, dh]]
 
 
+class LinearAttention(layer.Layer):
+    def __init__(self, name, input_sample_shape=None):
+        super(LinearAttention, self).__init__(name)
+        self.c, self.h, self.w = input_sample_shape[0]
+        assert self.c == input_sample_shape[1][0], \
+                '# channels != tag embed dim: %d vs %d' % (self.c, input_sample_shape[1][0])
+        self.U = tensor.Tensor((self.c, ))
+        self.V = tensor.Tensor((self.c, self.h*self.w))
+        initializer.gaussian(self.U, self.c, 0)
+        initializer.gaussian(self.V, self.c, self.h*self.w)
+        self.x = None
+        self.t = None
+
+    def get_output_sample_shape(self):
+        return (self.h * self.w, )
+
+    def param_names(self):
+        return [self.name+'_U', self.name+'_V']
+
+    def param_values(self):
+        return [self.U, self.V]
+
+    def forward(self, is_train, xs):
+        self.npU = tensor.to_numpy(self.U)
+        self.npV = tensor.to_numpy(self.V)
+
+        x = xs[0].reshape((xs[0].shape[0], self.c, -1))
+        ctx = xs[1]
+        a1 = np.einsum('ncl, c -> nl', x, self.npU)
+        a2 = np.einsum('nc, cl -> nl', ctx, self.npV)
+        a = np.tanh(a1 + a2)
+        if is_train:
+            self.x = x
+            self.ctx = ctx
+            self.a = a
+        return a
+
+    def backward(self, is_train, dy):
+        da = dy * (1 - (self.a**2))
+        dU = np.einsum('nl, ncl -> c', da, self.x)
+        dx = np.einsum('nl, c -> ncl', da, self.npU)
+        dctx = np.einsum('nl, cl ->nc', da, self.npV)
+        dV = np.einsum('nl, nc ->cl', da, self.ctx)
+        return [dx, dctx], [tensor.from_numpy(d) for d in [dU, dV]]
+
+
 class ContextAttention(layer.Layer):
     def __init__(self, name, input_sample_shape, debug=False):
         super(ContextAttention, self).__init__(name)
@@ -77,7 +123,7 @@ class ContextAttention(layer.Layer):
         l = self.h * self.w
         assert self.c == input_sample_shape[1][0], \
             'channel mis-match. street vs shop: %d, %d' % (self.c, input_sample_shape[1][0])
-        self.attention = MLPAttention('%s_attention' % name, input_sample_shape=[input_sample_shape[0], (self.c,)])
+        self.attention = LinearAttention('%s_attention' % name, input_sample_shape=[input_sample_shape[0], (self.c,)])
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
         self.debug= debug
