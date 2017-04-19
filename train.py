@@ -1,6 +1,7 @@
 import numpy as np
 import random
 import os
+import math
 import logging
 import datetime
 from argparse import ArgumentParser
@@ -54,7 +55,7 @@ def train(cfg, net, train_data, val_data, test_data=None):
             logging.info('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
             print('Test at epoch %d: %s' % (epoch, np.array_str(perf, 150)))
 
-        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr)
+        train_loss = net.train_on_epoch(epoch, train_data, opt, cfg.lr * math.pow(0.1, epoch // cfg.decay_freq))
         logging.info('Training at epoch %d: %s' % (epoch, np.array_str(train_loss)))
         if np.any(np.isnan(train_loss)) or np.any(np.isinf(train_loss)):
             return
@@ -119,6 +120,7 @@ if __name__ == '__main__':
     parser.add_argument("--max_epoch", type=int, default=300)
     parser.add_argument("--opt", choices= ['sgd', 'adam', 'nesterov'], default='sgd')
     parser.add_argument("--lr", type=float, default=0.01)
+    parser.add_argument("--decay_freq", type=int, default=50, 'decay lr by 0.1 for every decay_freq epoches')
     parser.add_argument("--mom", type=float, default=0.9)
     parser.add_argument("--weight_decay", type=float, default=1e-5)
     parser.add_argument("--dataset", choices=['darn', 'deepfashion'], default='darn')
