@@ -1,5 +1,5 @@
 from ynet import YNIN, YVGG, TripletLoss
-from tagnet import TagNIN
+from tagnet import TagNIN, TagVGG
 from ctxnet import CtxNIN, QuadLoss
 from singa import device
 
@@ -23,6 +23,10 @@ def create_net(args, test_data=None):
     elif args.net == 'tagnin':
         assert args.ncat > 0 or args.nattr > 0, 'Either num category or num tags should be set'
         net = TagNIN('TagNIN', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.ncat+args.nattr,
+                args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift, debug=args.debug)
+    elif args.net == 'tagvgg':
+        assert args.ncat > 0 or args.nattr > 0, 'Either num category or num tags should be set'
+        net = TagVGG('TagVGG', TripletLoss(args.margin, args.nshift), dev, args.img_size, args.batchsize, args.ncat+args.nattr,
                 args.freeze_shared, args.freeze_shop, args.freeze_user, nshift=args.nshift, debug=args.debug)
     elif args.net == 'ctxnin':
         assert args.candidate_path is not None, 'must provide the candiate path'

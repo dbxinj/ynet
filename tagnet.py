@@ -236,3 +236,43 @@ class TagNIN(ynet.YNIN):
         fea = self.forward_layers(False, img, self.shared[0:-1] + self.shop[0:-2])
         fea = self.shop[-2].forward(False, [fea, data.tag2vec(pid)])
         return fea, pid
+
+class TagVGG(TagNIN):
+    def create_net(self, name, img_size, batchsize=32):
+        assert self.ntag > 0, 'no tags for tag nin'
+        shared = []
+
+        shared.append(Conv2D('conv1-3x3', 96, 7, 2, pad=1,  input_sample_shape=(3, img_size, img_size)))
+        shared.append(Activation('conv1-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(LRN('conv1-norm', size=5, alpha=5e-4, beta=0.75, k=2, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(MaxPooling2D('pool1', 3, 3, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv2', 256, 5, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv2-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(MaxPooling2D('pool2', 2, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv3', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv3-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv4', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv4-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
+        shared.append(slice_layer)
+
+        user = []
+        user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(AvgPooling2D('street-pool5', 17, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(ynet.L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+
+        shop = []
+        shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag',
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
+            debug=self.debug))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+
+        return shared, user, shop
