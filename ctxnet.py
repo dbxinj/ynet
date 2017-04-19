@@ -77,7 +77,7 @@ class ContextAttention(layer.Layer):
         l = self.h * self.w
         assert self.c == input_sample_shape[1][0], \
             'channel mis-match. street vs shop: %d, %d' % (self.c, input_sample_shape[1][0])
-        self.attention = ProductAttention('%s_attention' % name, [input_sample_shape[0], (self.c,)])
+        self.attention = MLPAttention('%s_attention' % name, input_sample_shape=[input_sample_shape[0], (self.c,)])
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
         self.debug= debug
