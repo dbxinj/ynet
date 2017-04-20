@@ -15,6 +15,7 @@ import model
 import data
 from singa import optimizer
 
+
 def early_stop():
     pass
     '''
@@ -98,6 +99,7 @@ def create_datasets(args, with_train, with_val, with_test=False):
         test_data = data.DataIter(args.img_dir, img_list_file, test_products,
                 img_size=args.img_size, batchsize=args.batchsize, nproc=1,
                 meanstd=meanstd, ncategory=args.ncat, nattribute=args.nattr)
+
 
     return train_data, val_data, test_data
 
