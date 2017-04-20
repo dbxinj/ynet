@@ -100,7 +100,7 @@ class LinearAttention(layer.Layer):
         ctx = xs[1]
         a1 = np.einsum('ncl, c -> nl', x, self.npU)
         a2 = np.einsum('nc, cl -> nl', ctx, self.npV)
-        a = np.tanh(a1 + a2)
+        a = a1 + a2
         if is_train:
             self.x = x
             self.ctx = ctx
@@ -108,7 +108,7 @@ class LinearAttention(layer.Layer):
         return a
 
     def backward(self, is_train, dy):
-        da = dy * (1 - (self.a**2))
+        da = dy #* (1 - (self.a**2))
         dU = np.einsum('nl, ncl -> c', da, self.x)
         dx = np.einsum('nl, c -> ncl', da, self.npU)
         dctx = np.einsum('nl, cl ->nc', da, self.npV)
@@ -198,7 +198,6 @@ class QuadLoss(object):
 class CtxNIN(TagNIN):
     def create_net(self, name, img_size, batchsize=32):
         assert self.ntag > 0, 'no tags for ctx nin'
-        assert self.freeze_shop and self.freeze_shared, 'must freeze shop and shared'
         shared = []
 
         self.add_conv(shared, 'conv1', [96, 96, 96], 11, 4, sample_shape=(3, img_size, img_size))
@@ -264,20 +263,24 @@ class CtxNIN(TagNIN):
             print '------------backward------------'
         dp_user, dp_shop = [], []
         duser, dshop = self.loss.backward()
+        shift_dshop = np.zeros((self.batchsize, dshop.shape[1]))
         if not self.freeze_shop:
-            dshop1 = self.backward_layers(dshop, self.shop[-1:-2:-1], dp_shop)
-        dshifted_user, dshifted_shop = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
+            for i in range(self.nshift + 1):
+                idx = range(i, self.batchsize) + range(0, i)
+                shift_dshop[idx] += dshop[i * self.batchsize: (i+1) * self.batchsize]
+            dshop1 = self.backward_layers(shift_dshop, self.shop[-1:-2:-1], dp_shop)
+        dshifted_user, dshifted_ctx = self.backward_layers(duser, self.user[-1:-3:-1], dp_user)
         s = dshifted_user.shape
         assert self.batchsize == s[0] / (self.nshift + 1), \
                 'batchsize doesnot match  %d vs %d' % (self.batchsize, s[0] / (self.nshift + 1))
         duser = np.zeros((self.batchsize, s[1], s[2], s[3]))
         if not self.freeze_shop:
-            dshop2 = np.zeros((self.batchsize, dshifted_shop.shape[1]))
+            dshop2 = np.zeros((self.batchsize, dshifted_ctx.shape[1]))
         for i in range(self.nshift + 1):
             duser += dshifted_user[i * self.batchsize: (i+1) * self.batchsize]
             if not self.freeze_shop:
                 idx = range(i, self.batchsize) + range(0, i)
-                dshop2[idx] += dshifted_shop[i * self.batchsize: (i+1) * self.batchsize]
+                dshop2[idx] += dshifted_ctx[i * self.batchsize: (i+1) * self.batchsize]
         duser = tensor.from_numpy(duser)
         duser.to_device(self.device)
         if not self.freeze_shop:
@@ -300,8 +303,11 @@ class CtxNIN(TagNIN):
     def retrieval(self, data, topk, candidate_path):
         with open(os.path.join(candidate_path), 'r') as fd:
             sorted_idx, target, db_fea, db_pid = pickle.load(fd)
+        if not self.freeze_shop:
+            db_fea,_ = self.extract_db_feature(data)
         norm = np.sqrt(np.sum(db_fea**2, axis=1) + 1e-7)
         db_norm = db_fea / norm[:, np.newaxis]
+
         data.start(1, 0)
         bar = trange(data.num_batches, desc='Query Image')
         new_target = np.empty(target.shape, dtype=np.bool)
@@ -317,3 +323,47 @@ class CtxNIN(TagNIN):
         data.stop()
         prec = compute_precision(new_target)
         return prec, (new_sorted_idx, new_target, None, None)
+
+
+class CtxVGG(CtxNIN):
+    def create_net(self, name, img_size, batchsize=32):
+        assert self.ntag > 0, 'no tags for ctx nin'
+        shared = []
+
+        shared.append(Conv2D('conv1-3x3', 96, 7, 2, pad=1,  input_sample_shape=(3, img_size, img_size)))
+        shared.append(Activation('conv1-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(LRN('conv1-norm', size=5, alpha=5e-4, beta=0.75, k=2, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(MaxPooling2D('pool1', 3, 3, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv2', 256, 5, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv2-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(MaxPooling2D('pool2', 2, 2, pad=0, input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv3', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1000, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv3-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        shared.append(Conv2D('conv4', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()))
+        shared.append(Activation('conv4-relu', input_sample_shape=shared[-1].get_output_sample_shape()))
+
+        slice_layer = Slice('slice', 0, [batchsize*self.nuser], input_sample_shape=shared[-1].get_output_sample_shape())
+        shared.append(slice_layer)
+
+        shop = []
+        shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(TagAttention('shop-tag',
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
+            debug=self.debug))
+        shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
+
+        user = []
+        user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(ContextAttention('street-cxt',
+            input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()],
+            debug=self.debug))
+        user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
+
+        return shared, user, shop
+
+

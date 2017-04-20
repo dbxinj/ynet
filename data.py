@@ -341,10 +341,35 @@ def benchmark(img_dir, data_dir):
     print('time per batch = %f, num batch = %d' % ((time.time() - t)/data.num_batches, data.num_batches))
 
 
+def save_list(fpath, imgid_pid, imglist):
+    with open(fpath, 'w') as fd:
+        for imgid, pid in imgid_pid:
+            fd.write('%s %s\n' % (imglist[imgid], pid))
+        fd.flush()
+
+
+def extract_testdata(data_dir, img_dir):
+    img_list_file = os.path.join(data_dir, 'image.txt')
+    product_list_file = os.path.join(data_dir, 'product.txt')
+    products = read_products(product_list_file) # [0:5000]
+    num_products = len(products)
+    num_train_products = int(num_products * 0.8)
+    num_val_products = (num_products - num_train_products) // 2
+    train_data, val_data, test_data = None, None, None
+    test_products = products[num_train_products + num_val_products:]
+    test_data = DataIter(img_dir, img_list_file, test_products)
+
+    imgid_pid = test_data.prepare_list(test_data.pid2userids)
+    save_list(os.path.join(data_dir, 'test_list.txt'), imgid_pid, test_data.img_path)
+    imgid_pid = test_data.prepare_list(test_data.pid2shopids)
+    save_list(os.path.join(data_dir, 'db_list.txt'), imgid_pid, test_data.img_path)
+
+
 if __name__ == '__main__':
     logging.basicConfig(stream=sys.stdout, format='%(message)s', level=logging.INFO)
-    img_dir = '/home/wangyan/deepfashion/img'
-    data_dir = 'data/deepfashion/'
+    extract_testdata('./data/darn', '../darn/')
+    # img_dir = '/home/wangyan/deepfashion/img'
+    # data_dir = 'data/deepfashion/'
     # benchmark(img_dir, data_dir)
-    ary = calc_mean_std(img_dir, data_dir, 0.5)
-    np.save(os.path.join(data_dir, 'mean-std'), ary)
+    # ary = calc_mean_std(img_dir, data_dir, 0.5)
+    # np.save(os.path.join(data_dir, 'mean-std'), ary)
