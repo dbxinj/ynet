@@ -1,7 +1,7 @@
 from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagAttention, TagNIN
 from util import *
 
-from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice
+from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice, LRN
 from singa import initializer
 from singa import layer
 from singa import loss

@@ -140,7 +140,7 @@ if __name__ == '__main__':
     parser.add_argument("--train_split", type=float, default=0.8, help='ratio of products for training')
     parser.add_argument("--search_freq", type=int, default=5, help='frequency of validation on retrieval')
     parser.add_argument("--topk", type=int, default=100, help='top results')
-    parser.add_argument("--net", default='tagnin', choices=['tagnin', 'ctxnin', 'ynin', 'yvgg', 'tagvgg'])
+    parser.add_argument("--net", default='tagnin', choices=['tagnin', 'ctxnin', 'ynin', 'yvgg', 'tagvgg', 'ctxvgg'])
     parser.add_argument("--nshift", type=int, default=4)
     parser.add_argument("--ntrail", type=int, default=1)
     parser.add_argument("--freeze_shared", action="store_true")
