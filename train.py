@@ -5,6 +5,7 @@ import math
 import logging
 import datetime
 from argparse import ArgumentParser
+import __builtin__
 
 log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
 os.makedirs(log_dir)

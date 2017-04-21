@@ -125,7 +125,7 @@ class ProductAttention(layer.Layer):
 
 
 class TagAttention(layer.Layer):
-    def __init__(self, name, input_sample_shape, debug=False):
+    def __init__(self, name, input_sample_shape):
         super(TagAttention, self).__init__(name)
         self.c, self.h, self.w = input_sample_shape[0]
         l = self.h * self.w
@@ -134,7 +134,6 @@ class TagAttention(layer.Layer):
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
         self.dev = None
-        self.debug= debug
 
     def get_output_sample_shape(self):
         return (self.c, )
@@ -146,7 +145,7 @@ class TagAttention(layer.Layer):
         return self.embed.param_values()
 
     def display(self, name, val):
-        if self.debug:
+        if ynet.debug:
             print('%30s = %2.8f' % (name, np.average(np.abs(val))))
 
     def forward(self, is_train, x):
@@ -156,28 +155,28 @@ class TagAttention(layer.Layer):
         else:
             img = x[0]
         t = self.embed.forward(is_train, x[1])
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.embed.name, t)
         w = self.attention.forward(is_train, [img, t])
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.softmax.name, w)
         y = self.agg.forward(is_train, [img, w])
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.agg.name, y)
         return y
 
     def backward(self, is_train, dy):
         [dx1, dw], _ = self.agg.backward(is_train, dy)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.agg.name, dx1)
         dw, _ = self.softmax.backward(is_train, dw)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.softmax.name, dw)
         [dx2, dt], _ = self.attention.backward(is_train, dw)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.attention.name, dx2)
         _, dW = self.embed.backward(is_train, dt)
         dx = np.reshape(dx1 + dx2, (dx1.shape[0], self.c, self.h, self.w))
@@ -212,8 +211,7 @@ class TagNIN(ynet.YNIN):
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         shop.append(TagAttention('shop-tag',
-            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
-            debug=self.debug))
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )]))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
         return shared, user, shop
 
@@ -263,6 +261,8 @@ class TagVGG(TagNIN):
         user = []
         user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Conv2D('street-conv5', 512, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
+        user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(AvgPooling2D('street-pool5', 17, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(ynet.L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
@@ -271,8 +271,7 @@ class TagVGG(TagNIN):
         shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(TagAttention('shop-tag',
-            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
-            debug=self.debug))
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )]))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
         return shared, user, shop

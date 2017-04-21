@@ -13,6 +13,8 @@ import scipy.spatial
 from tqdm import trange
 import time
 
+debug=True
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,8 +22,7 @@ class YNet(object):
     '''Base network'''
     def __init__(self, name, loss, dev, img_size, batchsize=32, ntag=0,
             freeze_shared=False, freeze_shop=False, freeze_user=False,
-            nshift=1, debug=False, nuser=1, nshop=1):
-        self.debug = debug
+            nshift=1, nuser=1, nshop=1):
         self.name = name
         self.loss = loss
         self.device = dev
@@ -95,7 +96,7 @@ class YNet(object):
                     initializer.gaussian(pval, 0, pval.shape[1])
                 else:
                     pval.set_value(0)
-                if self.debug:
+                if debug:
                     print pname, pval.shape, pval.l1()
         else:
             self.load(weight_path)
@@ -130,7 +131,7 @@ class YNet(object):
                             val.set_value(0)
                     else:
                         val.copy_from_numpy(params[name])
-                    if self.debug:
+                    if debug:
                         print name, params[name].shape, val.l1()
 
                 except AssertionError as err:
@@ -143,12 +144,17 @@ class YNet(object):
         loss = None
         data.start(self.nuser, self.nshop)
         bar = trange(data.num_batches, desc='Epoch %d' % epoch)
+        global debug
         for b in bar:
+            if b == 0:
+                debug = True
+            else:
+                debug = False
             grads, l, t = self.bprop(data)
-            if self.debug:
+            if debug:
                 print('-------------params---------------')
             for pname, pval, pgrad in zip(self.param_names(), self.param_values(), grads):
-                if self.debug:
+                if debug:
                     print('%30s = %f, %f' % (pname, pval.l1(), pgrad.l1()))
                 opt.apply_with_lr(epoch, lr, pgrad, pval, str(pname), b)
             if loss is None:
@@ -172,7 +178,7 @@ class YNet(object):
                 query_fea = np.empty((data.num_batches * self.batchsize, fea.shape[1]), dtype=np.float32)
             query_fea[i*fea.shape[0]:(i+1)*fea.shape[0]] = fea
         data.stop()
-        if self.debug:
+        if debug:
             print 'query shape', query_fea.shape
         return query_fea, query_pid
 
@@ -188,7 +194,7 @@ class YNet(object):
                 db_fea = np.empty((data.num_batches * self.batchsize,  fea.shape[1]), dtype=np.float32) #data.db_size,
             db_fea[i*fea.shape[0]:(i+1)*fea.shape[0]] = fea
         data.stop()
-        if self.debug:
+        if debug:
             print 'db shape', db_fea.shape
         return db_fea, db_pid
 
@@ -361,7 +367,7 @@ class YNIN(YNet):
     def put_input_to_gpu(self, imgs):
         x = tensor.from_numpy(imgs)
         x.to_device(self.device)
-        if self.debug:
+        if debug:
             print '------------forward------------'
             print('%30s = %2.8f' % ('data', x.l1()))
         return x
@@ -369,7 +375,7 @@ class YNIN(YNet):
     def forward_layers(self, is_train, x, layers):
         for lyr in layers:
             x = lyr.forward(is_train, x)
-            if self.debug:
+            if debug:
                 show_debuginfo(lyr.name, x)
         return x
 
@@ -387,14 +393,14 @@ class YNIN(YNet):
     def backward_layers(self, dy, layers, dparam):
         for lyr in layers:
             dy, dp = lyr.backward(True, dy)
-            if self.debug:
+            if debug:
                 show_debuginfo(lyr.name, dy)
             if dp is not None:
                 dparam.extend(dp[::-1])
         return dy
 
     def backward(self):
-        if self.debug:
+        if debug:
             print '------------backward------------'
         param_grads = []
         duser, dshop = self.loss.backward()
