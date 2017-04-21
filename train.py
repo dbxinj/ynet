@@ -6,7 +6,7 @@ import logging
 import datetime
 from argparse import ArgumentParser
 import __builtin__
-from vis import vis_attention
+#from vis import vis_attention
 
 log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
 os.makedirs(log_dir)
@@ -162,7 +162,7 @@ if __name__ == '__main__':
     net = model.create_net(args, test_data)
     if args.vis_dir:
         net.init_params(args.param_path)
-        vis_attention(args, test_data, net)
+        # vis_attention(args, test_data, net)
     else:
         for i in range(args.ntrail):
             if args.ntrail > 1:
