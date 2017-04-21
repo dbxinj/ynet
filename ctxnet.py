@@ -1,5 +1,6 @@
 from tagnet import L2Norm, Softmax, Aggregation, ProductAttention, TagAttention, TagNIN
 from util import *
+import ynet
 
 from singa.layer import Conv2D, Activation, MaxPooling2D, AvgPooling2D, Slice, LRN
 from singa import initializer
@@ -117,7 +118,7 @@ class LinearAttention(layer.Layer):
 
 
 class ContextAttention(layer.Layer):
-    def __init__(self, name, input_sample_shape, debug=False):
+    def __init__(self, name, input_sample_shape):
         super(ContextAttention, self).__init__(name)
         self.c, self.h, self.w = input_sample_shape[0]
         l = self.h * self.w
@@ -126,7 +127,6 @@ class ContextAttention(layer.Layer):
         self.attention = LinearAttention('%s_attention' % name, input_sample_shape=[input_sample_shape[0], (self.c,)])
         self.softmax = Softmax('%s_softmax' % name, (l,))
         self.agg = Aggregation('%s_agg' % name, [input_sample_shape[0], (l,)])
-        self.debug= debug
 
     def get_output_sample_shape(self):
         return (self.c, )
@@ -140,25 +140,25 @@ class ContextAttention(layer.Layer):
     def forward(self, is_train, x):
         img, ctx = x[0], x[1]
         w = self.attention.forward(is_train, [img, ctx])
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.attention.name, w)
         w = self.softmax.forward(is_train, w)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.softmax.name, w)
         y = self.agg.forward(is_train, [img, w])
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.agg.name, y)
         return y
 
     def backward(self, is_train, dy):
         [dx1, dw], _ = self.agg.backward(is_train, dy)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.agg.name, dx1)
         dw, _ = self.softmax.backward(is_train, dw)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.softmax.name, dw)
         [dx2, dctx], dp = self.attention.backward(is_train, dw)
-        if self.debug:
+        if ynet.debug:
             show_debuginfo(self.attention.name, [dx2, dctx])
         dx = dx1 + dx2
         dx = dx.reshape((dx.shape[0], self.c, self.h, self.w))
@@ -214,15 +214,13 @@ class CtxNIN(TagNIN):
         shop = []
         self.add_conv(shop, 'shop-conv4', [1024, 1024, 1000], 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[1])
         shop.append(TagAttention('shop-tag',
-            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )],
-            debug=self.debug))
+            input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )]))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
         user = []
         self.add_conv(user, 'street-conv4', [1024, 1024, 1000] , 3, 1, 1, sample_shape=slice_layer.get_output_sample_shape()[0])
         user.append(ContextAttention('street-cxt',
-            input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()],
-            debug=self.debug))
+            input_sample_shape=[user[-1].get_output_sample_shape(), shop[-1].get_output_sample_shape()]))
         user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         return shared, user, shop
@@ -259,7 +257,7 @@ class CtxNIN(TagNIN):
         return loss, t2 - t1, time.time() - t2
 
     def backward(self):
-        if self.debug:
+        if ynet.debug:
             print '------------backward------------'
         dp_user, dp_shop = [], []
         duser, dshop = self.loss.backward()

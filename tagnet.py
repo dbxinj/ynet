@@ -81,7 +81,7 @@ class TagEmbedding(layer.Layer):
         super(TagEmbedding, self).__init__(name)
         self.W = tensor.Tensor((input_sample_shape[0], num_output))
         #initializer.gaussian(self.W, input_sample_shape[0], num_output)
-        self.W.gaussian(0, 0.001)
+        self.W.gaussian(0, 0.008)
 
     def param_names(self):
         return ['%s_weight' % self.name]
