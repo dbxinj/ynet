@@ -149,10 +149,14 @@ if __name__ == '__main__':
     parser.add_argument("--freeze_shop", action="store_true")
     parser.add_argument("--ncat", type=int, default=0, help='# of different categories')
     parser.add_argument("--nattr", type=int, default=0, help='# of different attribute values')
+    parser.add_argument("--vis_dir", help="visualization output folder")
     args = parser.parse_args()
 
     train_data, val_data, test_data = create_datasets(args, True, True, True)
     net = model.create_net(args, test_data)
+    if args.vis_dir:
+        vis_attention(args, test_data, net)
+        return
     for i in range(args.ntrail):
         if args.ntrail > 1:
             args = gen_cfg(args)
