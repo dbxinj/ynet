@@ -80,7 +80,8 @@ class TagEmbedding(layer.Layer):
     def __init__(self, name, num_output, input_sample_shape):
         super(TagEmbedding, self).__init__(name)
         self.W = tensor.Tensor((input_sample_shape[0], num_output))
-        initializer.gaussian(self.W, input_sample_shape[0], num_output)
+        #initializer.gaussian(self.W, input_sample_shape[0], num_output)
+        self.W.gaussian(0, 0.001)
 
     def param_names(self):
         return ['%s_weight' % self.name]
@@ -264,15 +265,17 @@ class TagVGG(TagNIN):
         user = []
         user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(Conv2D('street-conv5', 512, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
-        user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(AvgPooling2D('street-pool5', 17, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Conv2D('street-conv6', 128, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Activation('street-conv6-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(AvgPooling2D('street-pool6', 8, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(ynet.L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
         shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Conv2D('shop-conv6', 128, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Activation('shop-conv6-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(TagAttention('shop-tag',
             input_sample_shape=[shop[-1].get_output_sample_shape(), (self.ntag, )]))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
