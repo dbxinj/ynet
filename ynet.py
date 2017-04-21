@@ -115,6 +115,12 @@ class YNet(object):
             for name, val in zip(self.param_names(True), self.param_values(True)):
                 if name not in params:
                     print 'Param: %s missing in the checkpoint file' % name
+                    if 'conv' in name :
+                        print 'random initialize it'
+                        if len(val.shape) > 1:
+                            initializer.gaussian(val, 0, val.shape[1])
+                        else:
+                            val.set_value(0)
                     continue
                 try:
                     if name == 'conv1-3x3_weight' and len(params[name].shape) == 4:
@@ -455,14 +461,18 @@ class YVGG(YNIN):
         user = []
         user.append(Conv2D('street-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         user.append(Activation('street-conv5-relu', input_sample_shape=user[-1].get_output_sample_shape()))
-        user.append(AvgPooling2D('street-pool5', 17, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Conv2D('street-conv6', 128, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(Activation('street-conv6-relu', input_sample_shape=user[-1].get_output_sample_shape()))
+        user.append(AvgPooling2D('street-pool6', 8, 1, pad=0, input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(Flatten('street-flat', input_sample_shape=user[-1].get_output_sample_shape()))
         user.append(L2Norm('street-l2', input_sample_shape=user[-1].get_output_sample_shape()))
 
         shop = []
         shop.append(Conv2D('shop-conv5', 512, 3, 1, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=1, input_sample_shape=shared[-1].get_output_sample_shape()[1]))
         shop.append(Activation('shop-conv5-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
-        shop.append(AvgPooling2D('shop-pool5', 17, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Conv2D('shop-conv6', 128, 3, 2, cudnn_prefer='limited_workspace', workspace_byte_limit=1500, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(Activation('shop-conv6-relu', input_sample_shape=shop[-1].get_output_sample_shape()))
+        shop.append(AvgPooling2D('shop-pool6', 8, 1, pad=0, input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(Flatten('shop-flat', input_sample_shape=shop[-1].get_output_sample_shape()))
         shop.append(L2Norm('shop-l2', input_sample_shape=shop[-1].get_output_sample_shape()))
 
