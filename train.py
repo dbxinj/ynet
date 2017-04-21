@@ -6,6 +6,7 @@ import logging
 import datetime
 from argparse import ArgumentParser
 import __builtin__
+from vis import vis_attention
 
 log_dir = os.path.join('log', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
 os.makedirs(log_dir)
@@ -97,9 +98,14 @@ def create_datasets(args, with_train, with_val, with_test=False):
                 meanstd=meanstd, ncategory=args.ncat, nattribute=args.nattr)
     if with_test:
         test_products = products[num_train_products + num_val_products:]
-        test_data = data.DataIter(args.img_dir, img_list_file, test_products,
-                img_size=args.img_size, batchsize=args.batchsize, nproc=1,
-                meanstd=meanstd, ncategory=args.ncat, nattribute=args.nattr)
+        if args.vis_dir is not None:
+            test_data = data.DataIter(args.img_dir, img_list_file, test_products,
+                    img_size=args.img_size, batchsize=args.batchsize, nproc=1,
+                    ncategory=args.ncat, nattribute=args.nattr)
+        else:
+            test_data = data.DataIter(args.img_dir, img_list_file, test_products,
+                    img_size=args.img_size, batchsize=args.batchsize, nproc=1,
+                    meanstd=meanstd, ncategory=args.ncat, nattribute=args.nattr)
 
 
     return train_data, val_data, test_data
@@ -155,15 +161,16 @@ if __name__ == '__main__':
     train_data, val_data, test_data = create_datasets(args, True, True, True)
     net = model.create_net(args, test_data)
     if args.vis_dir:
-        vis_attention(args, test_data, net)
-        return
-    for i in range(args.ntrail):
-        if args.ntrail > 1:
-            args = gen_cfg(args)
-            logging.info('\n\n-----------------------%d trail----------------------------' % i)
-            args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
-        else:
-            args.param_dir = os.path.join('param', args.dataset)
-        os.makedirs(args.param_dir)
         net.init_params(args.param_path)
-        train(args, net, train_data, val_data, test_data)
+        vis_attention(args, test_data, net)
+    else:
+        for i in range(args.ntrail):
+            if args.ntrail > 1:
+                args = gen_cfg(args)
+                logging.info('\n\n-----------------------%d trail----------------------------' % i)
+                args.param_dir = os.path.join('param', datetime.datetime.now().strftime('%Y%m%d%H%M%S'))
+            else:
+                args.param_dir = os.path.join('param', args.dataset)
+            os.makedirs(args.param_dir)
+            net.init_params(args.param_path)
+            train(args, net, train_data, val_data, test_data)

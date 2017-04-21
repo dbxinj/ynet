@@ -148,7 +148,7 @@ class TagAttention(layer.Layer):
         if ynet.debug:
             print('%30s = %2.8f' % (name, np.average(np.abs(val))))
 
-    def forward(self, is_train, x):
+    def forward(self, is_train, x, output_weight=False):
         if type(x[0]) == tensor.Tensor:
             self.dev = x[0].device
             img = tensor.to_numpy(x[0])
@@ -166,7 +166,10 @@ class TagAttention(layer.Layer):
         y = self.agg.forward(is_train, [img, w])
         if ynet.debug:
             show_debuginfo(self.agg.name, y)
-        return y
+        if output_weight:
+            return y, w
+        else:
+            return y
 
     def backward(self, is_train, dy):
         [dx1, dw], _ = self.agg.backward(is_train, dy)
